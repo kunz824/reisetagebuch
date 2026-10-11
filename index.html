@@ -789,6 +789,7 @@
     <div class="formular">
       <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät. „💾 Speichern“ oben erstellt die Sicherung, immer mit demselben Dateinamen: Beim ersten Mal im Teilen-Menü „In Dateien sichern“ → OneDrive → <strong>02_Ferien › New Zealand Reise › Reisetagebuch</strong> wählen, danach jeweils nur noch „Ersetzen“.</p>
       <p class="hinweis" id="letzteSicherung"></p>
+      <p class="hinweis" id="appVersion" style="opacity:.7"></p>
     </div>
   </section>
 </main>
@@ -842,6 +843,8 @@
 // und "klein" (640 px, für Listen, Bericht und PDF).
 // ═════════════════════════════════════════════════════════════════════
 
+// Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
+const APP_VERSION = "11.10.2026 · 10:20";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2337,6 +2340,7 @@ window.addEventListener("load", positioniereWelle);
     setzeStand("⚠ Speicher nicht verfügbar");
     console.error(fehler);
   }
+  document.getElementById("appVersion").textContent = `App-Version ${APP_VERSION}`;
   renderAlles();
   positioniereWelle();
   // Speicher als "dauerhaft" anfragen, damit iOS die Daten nicht aufräumt
