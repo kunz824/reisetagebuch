@@ -482,8 +482,8 @@
   /* Mini-Fotos an den Kartenpunkten (ab Zoomstufe FOTO_ZOOM sichtbar) */
   .karte-foto {
     position: relative;
-    width: 56px;
-    height: 56px;
+    width: 64px;
+    height: 64px;
     border-radius: 9px;
     border: 2px solid var(--accent);
     background: var(--bg-panel-2);
@@ -492,6 +492,35 @@
     cursor: zoom-in;
   }
   .karte-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* Spitze unten links: zeigt auf den zugehörigen Nummernpunkt */
+  .karte-foto::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    bottom: -2px;
+    width: 10px;
+    height: 10px;
+    border-left: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    border-bottom-left-radius: 9px;
+  }
+  .karte-foto .foto-nr {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
   .karte-foto .anzahl {
     position: absolute;
     right: 3px;
@@ -923,7 +952,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 12:35";
+const APP_VERSION = "11.10.2026 · 12:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1739,29 +1768,47 @@ function zeichneKarte() {
   if (st.length > 1) {
     L.polyline(st.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.9 }).addTo(karteEbene);
   }
-  st.forEach((e) => {
-    // Sub-Themen tragen ihre laufende Nummer, das Reiseziel eine Flagge
-    // Start und Ziel ohne Nummer, leicht versetzt, damit sie keinen Punkt verdecken
-    const zeichen = e.ziel ? "🏁" : e.start ? "📍" : e.nr;
-    const anker = e.ziel ? [-4, 30] : e.start ? [30, 30] : [13, 13];
-    const icon = L.divIcon({ className: "", html: `<div class="karte-marker${e.ziel || e.start ? " ziel" : ""}">${zeichen}</div>`, iconSize: [26, 26], iconAnchor: anker });
+  // 11.10.2026: Haupteintrag (Start/Ziel) = eine Stecknadel, Sub-Themen = Nummer.
+  // Fallen Start und Ziel auf denselben Ort (z.B. Ziel von Tag 2 = Start von
+  // Tag 3), erscheint nur eine Stecknadel, im Popup stehen beide Angaben.
+  const nadeln = [];
+  for (const e of st.filter(p => p.start || p.ziel)) {
+    const label = `${e.ziel ? "Ziel" : "Start"} ${tagLabel(e.datum)}: ${e.ort || ""}`;
+    const da = nadeln.find(n => km([n.lat, n.lon], [e.lat, e.lon]) < 0.3);
+    if (da) da.labels.push(label); else nadeln.push({ lat: e.lat, lon: e.lon, labels: [label] });
+  }
+  const nadelSvg = '<svg width="26" height="36" viewBox="0 0 26 36" aria-hidden="true"><path d="M13 35C13 35 2 21 2 13a11 11 0 0 1 22 0c0 8-11 22-11 22z" fill="#e0785a" stroke="#10141b" stroke-width="2"/><circle cx="13" cy="13" r="4.5" fill="#10141b"/></svg>';
+  const subPunkte = st.filter(p => !p.start && !p.ziel);
+  for (const n of nadeln) {
+    // Liegt an derselben Stelle ein nummerierter Punkt, Nadel links daneben setzen
+    const belegt = subPunkte.some(p => km([p.lat, p.lon], [n.lat, n.lon]) < 0.3);
+    const icon = L.divIcon({ className: "karte-nadel", html: nadelSvg, iconSize: [26, 36], iconAnchor: belegt ? [34, 35] : [13, 35] });
+    const inhalt = document.createElement("div");
+    n.labels.forEach((t, i) => { if (i) inhalt.appendChild(document.createElement("br")); inhalt.append(t); });
+    L.marker([n.lat, n.lon], { icon, zIndexOffset: 200 }).bindPopup(inhalt).addTo(karteEbene);
+    grenzen.push([n.lat, n.lon]);
+  }
+  for (const e of st.filter(p => !p.start && !p.ziel)) {
+    const icon = L.divIcon({ className: "", html: `<div class="karte-marker">${e.nr}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
     const inhalt = document.createElement("div");
     const b = document.createElement("strong");
-    b.textContent = `${e.ziel ? "Reiseziel" : e.start ? "Start" : `Nr. ${e.nr}`} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
+    b.textContent = `Nr. ${e.nr} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
-    L.marker([e.lat, e.lon], { icon }).bindPopup(inhalt).addTo(karteEbene);
+    L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([e.lat, e.lon]);
-    // Mini-Foto oberhalb des Punktes; Antippen öffnet alle Fotos dieses Eintrags
+    // Mini-Foto rechts oberhalb des Punktes, mit derselben Nummer wie der
+    // Punkt. Antippen öffnet alle Fotos dieses Sub-Themas.
     if (e.fotos && e.fotos.length) {
-      const html = `<div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}">${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length}</span>` : ""}</div>`;
-      const fotoIcon = L.divIcon({ className: "", html, iconSize: [60, 60], iconAnchor: [30, 76] });
-      const m = L.marker([e.lat, e.lon], { icon: fotoIcon, zIndexOffset: 500 })
+      const html = `<div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}"><span class="foto-nr">${e.nr}</span>${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length} Fotos</span>` : ""}</div>`;
+      const fotoIcon = L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [-6, 74] });
+      const m = L.marker([e.lat, e.lon], { icon: fotoIcon, zIndexOffset: 500 + e.nr })
         .on("click", () => oeffneLightbox(e.fotos, 0))
         .on("add", () => { const el = m.getElement(); if (el) ladeBilderIn(el); });
       m.addTo(fotoEbene);
     }
-  });
-  if (grenzen.length > 1) karte.fitBounds(grenzen, { padding: [30, 30], maxZoom: 13 });
+  }
+  // Platz oben rechts für die Mini-Fotos lassen
+  if (grenzen.length > 1) karte.fitBounds(grenzen, { paddingTopLeft: [40, 90], paddingBottomRight: [90, 30], maxZoom: 13 });
   else if (grenzen.length === 1) karte.setView(grenzen[0], 11);
   else karte.setView([46.8, 8.2], 7);
 }
@@ -1906,12 +1953,11 @@ async function statischeKarte() {
     st.forEach((e) => {
       const [x, y] = auf([e.lat, e.lon]);
       g.beginPath(); g.arc(x, y, 17, 0, Math.PI * 2);
-      g.fillStyle = e.ziel || e.start ? "#23262c" : "#d4a24e"; g.fill();
+      g.fillStyle = e.ziel || e.start ? "#e0785a" : "#d4a24e"; g.fill();   // Start/Ziel = Stecknadel-Farbe
       g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
       g.fillStyle = "#1a1d22"; g.font = "bold 17px -apple-system, Segoe UI, Roboto, sans-serif";
       g.textAlign = "center"; g.textBaseline = "middle";
-      if (e.ziel || e.start) g.fillStyle = "#d4a24e";
-      g.fillText(e.ziel ? "Z" : e.start ? "S" : String(e.nr), x, y + 1);
+      if (!e.ziel && !e.start) g.fillText(String(e.nr), x, y + 1);
     });
     return c.toDataURL("image/jpeg", 0.86);
   };
