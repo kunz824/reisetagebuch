@@ -492,17 +492,17 @@
     cursor: zoom-in;
   }
   .karte-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  /* Spitze unten links: zeigt auf den zugehörigen Nummernpunkt */
-  .karte-foto::after {
+  /* Spitze unten mittig: zeigt auf den zugehörigen Nummernpunkt */
+  .karte-foto-huelle { position: relative; width: 64px; height: 64px; }
+  .karte-foto-huelle::after {
     content: "";
     position: absolute;
-    left: -2px;
-    bottom: -2px;
-    width: 10px;
-    height: 10px;
-    border-left: 2px solid var(--accent);
-    border-bottom: 2px solid var(--accent);
-    border-bottom-left-radius: 9px;
+    left: 50%;
+    bottom: -9px;
+    margin-left: -7px;
+    border: 7px solid transparent;
+    border-top-color: var(--accent);
+    border-bottom: 0;
   }
   .karte-foto .foto-nr {
     position: absolute;
@@ -952,7 +952,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 12:45";
+const APP_VERSION = "11.10.2026 · 13:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1322,7 +1322,7 @@ function renderTagebuch() {
       block.appendChild(ek);
       const ortText = istThema(e)
         ? tagStreckeSymbole(datum)
-        : (e.ort && e.titel ? `📍 ${e.ort}` : "");
+        : (e.ort ? `📍 ${e.ort}${Number.isFinite(e.lat) ? "" : " · ohne Kartenpunkt"}` : "");
       if (ortText) {
         const ort = document.createElement("p");
         ort.className = "eintrag-ort";
@@ -1654,8 +1654,32 @@ for (const k of Object.keys(ORTSFELDER)) {
   feld(f.eingabe).addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); sucheOrtFuer(k); } });
 }
 
+// Ort eingetippt, aber keinen Treffer angetippt? Dann beim Speichern den
+// ersten Treffer der Ortssuche als Kartenpunkt übernehmen.
+async function ersterTreffer(q) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const a = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=de&q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!a.ok) return null;
+    const t = (await a.json())[0];
+    return t ? [Number(Number(t.lat).toFixed(5)), Number(Number(t.lon).toFixed(5))] : null;
+  } catch { return null; }
+}
+async function fehlendeKartenpunkte() {
+  for (const k of Object.keys(ORTSFELDER)) {
+    const f = ORTSFELDER[k];
+    const q = feld(f.eingabe).value.trim();
+    if (!q || Number.isFinite(form[f.lat]) || feld(f.eingabe).closest("[hidden]")) continue;
+    const pt = await ersterTreffer(q);
+    if (pt) { form[f.lat] = pt[0]; form[f.lon] = pt[1]; }
+  }
+}
+
 feld("eintragFormular").addEventListener("submit", async (ev) => {
   ev.preventDefault();
+  await fehlendeKartenpunkte();
   const meldung = feld("eintragMeldung");
   const datum = feld("eDatum").value;
   const titel = feld("eTitel").value.trim();
@@ -1734,7 +1758,8 @@ function zweistufig(btn, frage, aktion) {
 
 // ── Route: Karte + GPX ───────────────────────────────────────────────
 let karte = null, karteEbene = null, fotoEbene = null;
-const FOTO_ZOOM = 9;   // ab dieser Zoomstufe erscheinen die Mini-Fotos
+const FOTO_ZOOM = 8;   // ab dieser Zoomstufe erscheinen die Mini-Fotos
+let subMarker = [];    // [{p, nummer, foto, html}] für die Anordnung je Zoomstufe
 
 function initKarte() {
   if (karte) return true;
@@ -1750,7 +1775,7 @@ function initKarte() {
   const fotosUmschalten = () => {
     if (karte.getZoom() >= FOTO_ZOOM) fotoEbene.addTo(karte); else fotoEbene.remove();
   };
-  karte.on("zoomend", fotosUmschalten);
+  karte.on("zoomend", () => { ordneSubMarker(); fotosUmschalten(); });
   karte.whenReady(fotosUmschalten);
   return true;
 }
@@ -1788,29 +1813,62 @@ function zeichneKarte() {
     L.marker([n.lat, n.lon], { icon, zIndexOffset: 200 }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([n.lat, n.lon]);
   }
+  subMarker = [];
   for (const e of st.filter(p => !p.start && !p.ziel)) {
     const icon = L.divIcon({ className: "", html: `<div class="karte-marker">${e.nr}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
     const inhalt = document.createElement("div");
     const b = document.createElement("strong");
     b.textContent = `Nr. ${e.nr} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
-    L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 }).bindPopup(inhalt).addTo(karteEbene);
+    const nummer = L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 + e.nr }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([e.lat, e.lon]);
-    // Mini-Foto rechts oberhalb des Punktes, mit derselben Nummer wie der
-    // Punkt. Antippen öffnet alle Fotos dieses Sub-Themas.
+    // Mini-Foto direkt über seinem Nummernpunkt, mit derselben Nummer.
+    // Antippen öffnet alle Fotos dieses Sub-Themas.
+    let foto = null, html = "";
     if (e.fotos && e.fotos.length) {
-      const html = `<div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}"><span class="foto-nr">${e.nr}</span>${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length} Fotos</span>` : ""}</div>`;
-      const fotoIcon = L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [-6, 74] });
-      const m = L.marker([e.lat, e.lon], { icon: fotoIcon, zIndexOffset: 500 + e.nr })
+      html = `<div class="karte-foto-huelle"><div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}"><span class="foto-nr">${e.nr}</span>${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length} Fotos</span>` : ""}</div></div>`;
+      foto = L.marker([e.lat, e.lon], { icon: L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [32, 87] }), zIndexOffset: 500 + e.nr })
         .on("click", () => oeffneLightbox(e.fotos, 0))
-        .on("add", () => { const el = m.getElement(); if (el) ladeBilderIn(el); });
-      m.addTo(fotoEbene);
+        .on("add", () => { const el = foto.getElement(); if (el) ladeBilderIn(el); });
+      foto.addTo(fotoEbene);
     }
+    subMarker.push({ p: e, nummer, foto, html });
   }
-  // Platz oben rechts für die Mini-Fotos lassen
-  if (grenzen.length > 1) karte.fitBounds(grenzen, { paddingTopLeft: [40, 90], paddingBottomRight: [90, 30], maxZoom: 13 });
+  // Platz oben für die Mini-Fotos lassen
+  if (grenzen.length > 1) karte.fitBounds(grenzen, { paddingTopLeft: [50, 100], paddingBottomRight: [50, 30], maxZoom: 13 });
   else if (grenzen.length === 1) karte.setView(grenzen[0], 11);
   else karte.setView([46.8, 8.2], 7);
+  ordneSubMarker();
+}
+
+// 11.10.2026: Liegen Sub-Themen auf der Karte so nah beisammen, dass sie sich
+// überdecken würden (gleicher Ort, gleiches Hotel …), werden ihre Nummern
+// und Fotos nebeneinander aufgereiht -- so ist jede Nummer mit ihrem Foto
+// sichtbar. Wird bei jeder Zoomstufe neu berechnet.
+function ordneSubMarker() {
+  if (!karte || !subMarker.length) return;
+  const ABSTAND = 72;   // Pixel: Breite eines Mini-Fotos plus Luft
+  const gruppen = [];
+  for (const s of subMarker) {
+    const pt = karte.latLngToLayerPoint([s.p.lat, s.p.lon]);
+    const g = gruppen.find(x => x.pt.distanceTo(pt) < ABSTAND);
+    if (g) g.liste.push(s); else gruppen.push({ pt, ll: [s.p.lat, s.p.lon], liste: [s] });
+  }
+  for (const g of gruppen) {
+    const n = g.liste.length;
+    g.liste.forEach((s, i) => {
+      const dx = n > 1 ? (i - (n - 1) / 2) * ABSTAND : 0;
+      const ll = n > 1 ? g.ll : [s.p.lat, s.p.lon];
+      s.nummer.setLatLng(ll);
+      s.nummer.setIcon(L.divIcon({ className: "", html: `<div class="karte-marker">${s.p.nr}</div>`, iconSize: [26, 26], iconAnchor: [13 - dx, 13] }));
+      if (s.foto) {
+        s.foto.setLatLng(ll);
+        s.foto.setIcon(L.divIcon({ className: "", html: s.html, iconSize: [64, 64], iconAnchor: [32 - dx, 87] }));
+        const el = s.foto.getElement();
+        if (el) ladeBilderIn(el);
+      }
+    });
+  }
 }
 
 function renderTracks() {
