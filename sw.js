@@ -1,8 +1,8 @@
 // Service Worker Reisetagebuch (11.10.2026): App und Bibliotheken für
 // den Offline-Betrieb unterwegs zwischenspeichern. Kartenkacheln, die
 // einmal angesehen wurden, bleiben ebenfalls verfügbar.
-const APP_CACHE = "reisetagebuch-app-v1";
-const KACHEL_CACHE = "reisetagebuch-kacheln-v1";
+const APP_CACHE = "reisetagebuch-app-v2";
+const KACHEL_CACHE = "reisetagebuch-kacheln-v2";
 const APP_DATEIEN = [
   "./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
@@ -43,7 +43,7 @@ self.addEventListener("fetch", ev => {
     return;
   }
   // Kartenkacheln: Cache zuerst, sonst laden und merken
-  if (url.hostname.endsWith("basemaps.cartocdn.com")) {
+  if (url.hostname === "tile.openstreetmap.org") {
     ev.respondWith(caches.open(KACHEL_CACHE).then(c => c.match(req).then(r => r || fetch(req).then(n => {
       if (n.ok || n.type === "opaque") c.put(req, n.clone());
       return n;

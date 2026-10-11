@@ -380,7 +380,13 @@
     background: var(--bg-panel);
     overflow: hidden;
   }
-  .leaflet-container { font-family: var(--font); }
+  .leaflet-container { font-family: var(--font); background: #1b1f26; }
+  /* 11.10.2026: OpenStreetMap-Kacheln (ohne Schlüssel) per Filter dunkel
+     einfärben, passend zum App-Design. Marker und Linien bleiben farbig. */
+  #karte .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(0.92) saturate(0.6); }
+  .editor-kopf { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .editor-kopf h2 { margin: 0; flex: 1; min-width: 0; color: var(--text); font-weight: 600; font-size: 15px; }
+  .editor-kopf .zurueck { color: var(--accent); font-size: 14px; padding: 6px 8px 6px 0; }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-panel-2); color: var(--text); }
   .leaflet-popup-content { margin: 10px 12px; font-size: 13px; }
   .leaflet-container a.leaflet-popup-close-button { color: var(--text-dim); }
@@ -632,7 +638,10 @@
 
   <!-- ── Register 2: Eintrag ───────────────────────────────────────── -->
   <section id="register-eintrag" class="register">
-    <h2 id="eintragKopf" style="margin-top:0">Neuer Eintrag</h2>
+    <div class="editor-kopf">
+      <button type="button" class="btn-klein zurueck" id="editorZurueck" aria-label="Zurück zum Tagebuch">‹ Tagebuch</button>
+      <h2 id="eintragKopf">Neuer Eintrag</h2>
+    </div>
     <form class="formular" id="eintragFormular" novalidate>
       <label>Datum
         <input type="date" id="eDatum">
@@ -757,9 +766,6 @@
   <button class="tab-btn aktiv" data-register="tagebuch" type="button">
     <span class="tab-icon" aria-hidden="true">📖</span><span class="tab-label">Tagebuch</span>
   </button>
-  <button class="tab-btn" data-register="eintrag" type="button">
-    <span class="tab-icon" aria-hidden="true">✏️</span><span class="tab-label">Eintrag</span>
-  </button>
   <button class="tab-btn" data-register="route" type="button">
     <span class="tab-icon" aria-hidden="true">🗺️</span><span class="tab-label">Route</span>
   </button>
@@ -778,9 +784,11 @@
 // ═════════════════════════════════════════════════════════════════════
 
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-const KACHELN_DUNKEL = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const KACHELN_HELL = (z, x, y) => `https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
-const KARTEN_QUELLE = "© OpenStreetMap-Mitwirkende © CARTO";
+// 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
+// (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
+const KACHELN = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const KACHELN_HELL = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+const KARTEN_QUELLE = "© OpenStreetMap-Mitwirkende";
 
 // ── Datum / Zahlen ───────────────────────────────────────────────────
 function heuteISO() {
@@ -1135,10 +1143,14 @@ document.getElementById("teilenStart").addEventListener("click", () => {
   oeffneDialogTage([...ausgewaehlt].sort());
 });
 document.getElementById("neuerEintragBtn").addEventListener("click", async () => {
+  if (entwurfOffen()) { zeigeRegister("eintrag"); return; }   // angefangenen Eintrag nicht verlieren
   await formularVerwerfen();
   formularLeeren();
   zeigeRegister("eintrag");
 });
+function entwurfOffen() {
+  return !form.id && (feld("eTitel").value.trim() || feld("eText").value.trim() || form.fotos.length > 0);
+}
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
 const form = { id: null, fotos: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null };
@@ -1399,7 +1411,7 @@ function initKarte() {
     return false;
   }
   karte = L.map("karte", { zoomControl: true });
-  L.tileLayer(KACHELN_DUNKEL, { subdomains: "abcd", maxZoom: 19, attribution: KARTEN_QUELLE }).addTo(karte);
+  L.tileLayer(KACHELN, { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende' }).addTo(karte);
   karteEbene = L.layerGroup().addTo(karte);
   return true;
 }
@@ -2087,7 +2099,9 @@ function positioniereWelle() {
 }
 function zeigeRegister(name) {
   aktivesRegister = name;
-  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("aktiv", b.dataset.register === name));
+  // Der Editor ist kein eigenes Register mehr, sondern Teil des Tagebuchs
+  const tab = name === "eintrag" ? "tagebuch" : name;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("aktiv", b.dataset.register === tab));
   document.querySelectorAll(".register").forEach(r => r.classList.toggle("aktiv", r.id === `register-${name}`));
   positioniereWelle();
   renderTeilenLeiste();
@@ -2096,6 +2110,8 @@ function zeigeRegister(name) {
   window.scrollTo({ top: 0 });
 }
 document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => zeigeRegister(b.dataset.register)));
+// Zurück aus dem Editor: Eingaben bleiben stehen, bis gespeichert oder verworfen wird
+document.getElementById("editorZurueck").addEventListener("click", () => zeigeRegister("tagebuch"));
 window.addEventListener("resize", positioniereWelle);
 window.addEventListener("load", positioniereWelle);
 
