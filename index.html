@@ -46,6 +46,9 @@
      sondern nur #scroller. So federt beim Scrollen nichts mit und die
      Tabbar bleibt fest am unteren Rand. */
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  /* Fläche unterhalb der App (iOS lässt dort teils einen Streifen frei)
+     in der Farbe der Tabbar, damit die Leiste bis ganz unten reicht. */
+  html { background: #1b2029; }
   #scroller {
     position: fixed;
     inset: 0;
@@ -598,7 +601,9 @@
     background: #1b2029;   /* deckend: kein Flackern beim Scrollen auf iOS */
     transform: translateZ(0);
     border-top: 1px solid var(--border);
-    padding: 7px 8px calc(7px + env(safe-area-inset-bottom, 0px));
+    /* --luecke-unten: Teil des Home-Balken-Abstands, den iOS bereits
+       unterhalb der App freilässt (per Skript gemessen) */
+    padding: 7px 8px max(6px, calc(env(safe-area-inset-bottom, 0px) - var(--luecke-unten, 0px) + 4px));
     z-index: 10;
   }
   #tabBarPlatte, .tab-welle { display: none; }
@@ -641,7 +646,7 @@
   @media print {
     @page { size: A4; margin: 14mm 14mm 16mm; }
     :root { color-scheme: light; }
-    html, body { height: auto; overflow: visible; }
+    html, body { height: auto; overflow: visible; background: #fff; }
     #scroller { position: static; overflow: visible; }
     body { background: #fff; color: #000; }
     main { padding: 0; max-width: none; }
@@ -2307,6 +2312,20 @@ document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", (
 // Zurück aus dem Editor: Eingaben bleiben stehen, bis gespeichert oder verworfen wird
 document.getElementById("editorZurueck").addEventListener("click", () => zeigeRegister("tagebuch"));
 window.addEventListener("resize", positioniereWelle);
+
+// iPhone-Startbildschirm-App: Ist das App-Fenster kürzer als der Bildschirm,
+// liegt die Leiste schon über dem Home-Balken. Dann den Abstand dafür nicht
+// nochmals einrechnen, sonst wirkt die Leiste zu hoch.
+function messeUnterenRand() {
+  const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  const hochformat = matchMedia("(orientation: portrait)").matches;
+  const bildschirm = Math.max(screen.height, screen.width);
+  const luecke = standalone && hochformat ? Math.round(bildschirm - window.innerHeight) : 0;
+  document.documentElement.style.setProperty("--luecke-unten", `${luecke > 0 && luecke < 60 ? luecke : 0}px`);
+}
+messeUnterenRand();
+window.addEventListener("resize", messeUnterenRand);
+window.addEventListener("orientationchange", () => setTimeout(messeUnterenRand, 300));
 window.addEventListener("load", positioniereWelle);
 
 // ── Start ────────────────────────────────────────────────────────────
