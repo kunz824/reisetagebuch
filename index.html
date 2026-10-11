@@ -205,7 +205,7 @@
   .eintrag.sub { margin-top: 12px; padding-left: 12px; border-left: 2px solid var(--accent-soft); }
   .eintrag.thema h3 { font-size: 17px; }
   .eintrag.sub h3 { font-size: 14.5px; }
-  .eintrag.sub h3::before { content: "▸ "; color: var(--accent); }
+
   .tag-plus {
     margin-left: auto;
     background: none;
@@ -220,6 +220,35 @@
   .auswahl-modus .tag-plus { display: none; }
   .tag-km { color: var(--text); font-variant-numeric: tabular-nums; }
   .tag-km::before { content: "· "; color: var(--text-dim); }
+  .rolle-wahl { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .rolle-wahl button {
+    height: 40px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .rolle-wahl button.aktiv { background: var(--accent-soft); border-color: var(--accent); color: var(--text); font-weight: 600; }
+  .rolle-wahl button:disabled { opacity: 0.4; cursor: default; }
+  .sub-nr {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 5px;
+    border-radius: 11px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 700;
+    margin-right: 7px;
+    vertical-align: 2px;
+    font-variant-numeric: tabular-nums;
+  }
   .rolle-hinweis { font-size: 12.5px; color: var(--accent); margin: -4px 0 0; }
   .eintrag-kopf { display: flex; align-items: flex-start; gap: 8px; }
   .eintrag-kopf h3 { font-size: 16px; font-weight: 650; margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -474,6 +503,7 @@
     border-radius: 7px;
     padding: 1px 5px;
   }
+  .karte-marker.ziel { background: var(--bg-panel-2); font-size: 13px; border-color: var(--accent); }
   .karte-marker {
     width: 26px;
     height: 26px;
@@ -564,7 +594,7 @@
   .seite .fotos img:only-child { grid-column: 1 / -1; aspect-ratio: auto; max-height: 420px; object-fit: contain; }
   .seite .eintrag-druck + .eintrag-druck { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e3ded3; }
   .seite .eintrag-druck.sub h3 { font-size: 16px; }
-  .seite .eintrag-druck.sub h3::before { content: "▸ "; color: #b57d1e; }
+
 
   /* ── Dialog Teilen / PDF / Sicherung ──────────────────────────────── */
   #dialog {
@@ -740,10 +770,15 @@
       <label>Datum
         <input type="date" id="eDatum">
       </label>
+      <div class="rolle-wahl" id="eRolleWahl" role="group" aria-label="Art des Eintrags">
+        <button type="button" data-art="thema">★ Haupteintrag</button>
+        <button type="button" data-art="sub">▸ Sub-Thema</button>
+      </div>
       <p class="rolle-hinweis" id="eRolle"></p>
       <label>Titel
         <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off">
       </label>
+      <div id="ortBlock" style="display:flex;flex-direction:column;gap:12px">
       <label>Ort
         <span class="ort-zeile">
           <input type="search" id="eOrt" maxlength="60" placeholder="z.B. Kyoto" autocomplete="off" enterkeyhint="search">
@@ -753,6 +788,7 @@
       </label>
       <div id="ortTreffer"></div>
       <p class="ort-info" id="ortInfo"></p>
+      </div>
       <!-- Reiseziel: nur beim Thema des Tages (Haupteintrag) -->
       <div id="zielBlock" style="display:flex;flex-direction:column;gap:12px" hidden>
         <label>Reiseziel des Tages
@@ -768,7 +804,7 @@
       <label>Tagebuch
         <textarea id="eText" placeholder="Was hast du heute erlebt?"></textarea>
       </label>
-      <div>
+      <div id="fotoBlock">
         <p class="hinweis" style="margin-bottom:6px">Fotos</p>
         <div class="foto-raster" id="formFotos"></div>
         <input type="file" id="fotoInput" class="unsichtbar" accept="image/*" multiple>
@@ -887,7 +923,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 11:20";
+const APP_VERSION = "11.10.2026 · 11:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -983,6 +1019,15 @@ function normalisiere(roh) {
   d.reise = Object.assign(leereDaten().reise, d.reise || {});
   d.eintraege = Array.isArray(d.eintraege) ? d.eintraege : [];
   d.eintraege.forEach(e => { e.fotos = Array.isArray(e.fotos) ? e.fotos : []; });
+  // 11.10.2026: Art des Eintrags ausdrücklich speichern ("thema" = Haupteintrag
+  // ohne Fotos/Karte, "sub" = Sub-Thema mit Ort, Karte, Fotos und Nummer).
+  // Ältere Einträge: erster Eintrag eines Tages ohne Fotos wird Haupteintrag.
+  const mitThema = new Set(d.eintraege.filter(e => e.art === "thema").map(e => e.datum));
+  [...d.eintraege].sort((a, b) => a.datum.localeCompare(b.datum) || (a.erstellt || 0) - (b.erstellt || 0)).forEach(e => {
+    if (e.art === "thema" || e.art === "sub") return;
+    if (!mitThema.has(e.datum) && !e.fotos.length) { e.art = "thema"; mitThema.add(e.datum); }
+    else e.art = "sub";
+  });
   d.tracks = Array.isArray(d.tracks) ? d.tracks : [];
   d.meta = Object.assign({ geaendert: "", letzteSicherung: "" }, d.meta || {});
   return d;
@@ -1005,8 +1050,19 @@ async function speichere() {
 }
 
 function reiseTitel() { return daten.reise.titel || "Reisetagebuch"; }
+function istThema(e) { return e && e.art === "thema"; }
+// Je Tag: Haupteintrag zuerst, dann die Sub-Themen in Erfassungsreihenfolge
 function eintraegeSortiert() {
-  return [...daten.eintraege].sort((a, b) => a.datum.localeCompare(b.datum) || (a.erstellt || 0) - (b.erstellt || 0));
+  return [...daten.eintraege].sort((a, b) => a.datum.localeCompare(b.datum)
+    || (istThema(b) - istThema(a)) || (a.erstellt || 0) - (b.erstellt || 0));
+}
+function themaAm(datum) { return daten.eintraege.find(e => e.datum === datum && istThema(e)); }
+// Laufende Nummer der Sub-Themen über die ganze Reise (1, 2, 3 …) –
+// dieselbe Nummer steht im Tagebuch, auf der Karte und im Bericht.
+function subNummern() {
+  const m = new Map();
+  eintraegeSortiert().filter(e => !istThema(e)).forEach((e, i) => m.set(e.id, i + 1));
+  return m;
 }
 function tageMitEintraegen() { return [...new Set(eintraegeSortiert().map(e => e.datum))]; }
 function eintraegeAm(datum) { return eintraegeSortiert().filter(e => e.datum === datum); }
@@ -1018,27 +1074,29 @@ function tagNummer(datum) {
   return tageMitEintraegen().indexOf(datum) + 1;
 }
 function tagLabel(datum) { const n = tagNummer(datum); return n ? `Tag ${n}` : "Vor der Reise"; }
-// 11.10.2026: Route je Tag = Ort des Themas → Orte der Sub-Themen → Reiseziel.
+// Route je Tag = Orte der Sub-Themen (nummeriert) → Reiseziel des Haupteintrags.
 // Die Kilometer eines Tages werden aus diesen Punkten verdichtet.
-function tagesPunkte(datum) {
+function tagesPunkte(datum, nummern = subNummern()) {
   const punkte = [];
-  const eintraege = eintraegeAm(datum);
-  for (const e of eintraege) {
-    if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: e.ort, fotos: e.fotos });
+  for (const e of eintraegeAm(datum)) {
+    if (istThema(e)) continue;
+    if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: e.ort, fotos: e.fotos, nr: nummern.get(e.id) });
   }
-  const thema = eintraege[0];
+  const thema = themaAm(datum);
   if (thema && Number.isFinite(thema.zielLat) && Number.isFinite(thema.zielLon)) {
     punkte.push({ lat: thema.zielLat, lon: thema.zielLon, datum, titel: `🏁 ${thema.ziel || "Reiseziel"}`, ort: thema.ziel, ziel: true });
   }
   return punkte;
 }
 function tagKm(datum) { return streckeKm(tagesPunkte(datum).map(p => [p.lat, p.lon])); }
-function tagStrecke(datum) {   // "Ersigen → Singapur"
-  const thema = eintraegeAm(datum)[0];
-  if (!thema) return "";
-  return thema.ziel ? `${thema.ort || "?"} → ${thema.ziel}` : (thema.ort || "");
+function tagStrecke(datum) {   // "Ersigen → Singapur" (erster Ort des Tages → Reiseziel)
+  const thema = themaAm(datum);
+  const ersterOrt = (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
+  const ziel = thema && thema.ziel;
+  if (ziel) return ersterOrt ? `${ersterOrt} → ${ziel}` : `→ ${ziel}`;
+  return "";
 }
-function stationen() { return tageMitEintraegen().flatMap(tagesPunkte); }
+function stationen() { const n = subNummern(); return tageMitEintraegen().flatMap(d => tagesPunkte(d, n)); }
 function anzahlReisetage() {
   if (daten.reise.start && daten.reise.ende && daten.reise.ende >= daten.reise.start) {
     return tageZwischen(daten.reise.start, daten.reise.ende) + 1;
@@ -1053,7 +1111,7 @@ function kennzahlen() {
     fotos: daten.eintraege.reduce((s, e) => s + e.fotos.length, 0),
     kmRoute: streckeKm(st.map(e => [e.lat, e.lon])),
     kmTracks: daten.tracks.reduce((s, t) => s + (t.km || 0), 0),
-    stationen: st.length,
+    stationen: st.filter(p => !p.ziel).length,
   };
 }
 
@@ -1200,13 +1258,20 @@ function renderTagebuch() {
     }
     karte.appendChild(kopf);
 
+    const nummern = subNummern();
     eintraegeAm(datum).forEach((e, ei) => {
       const block = document.createElement("div");
-      block.className = "eintrag " + (ei === 0 ? "thema" : "sub");
+      block.className = "eintrag " + (istThema(e) ? "thema" : "sub");
       const ek = document.createElement("div");
       ek.className = "eintrag-kopf";
       const h3 = document.createElement("h3");
-      h3.textContent = e.titel || (e.ort ? e.ort : "Ohne Titel");
+      if (!istThema(e)) {
+        const nrEl = document.createElement("span");
+        nrEl.className = "sub-nr";
+        nrEl.textContent = nummern.get(e.id);
+        h3.appendChild(nrEl);
+      }
+      h3.append(e.titel || (e.ort ? e.ort : "Ohne Titel"));
       const bearbeiten = document.createElement("button");
       bearbeiten.type = "button";
       bearbeiten.className = "btn-klein";
@@ -1215,7 +1280,9 @@ function renderTagebuch() {
       bearbeiten.addEventListener("click", ev => { ev.stopPropagation(); if (!auswahlModus) bearbeiteEintrag(e.id); });
       ek.append(h3, bearbeiten);
       block.appendChild(ek);
-      const ortText = ei === 0 && e.ziel ? `📍 ${e.ort || "?"}  →  🏁 ${e.ziel}` : (e.ort && e.titel ? `📍 ${e.ort}` : "");
+      const ortText = istThema(e)
+        ? (e.ziel ? `🏁 ${tagStrecke(datum).replace("→", " → ")}` : "")
+        : (e.ort && e.titel ? `📍 ${e.ort}` : "");
       if (ortText) {
         const ort = document.createElement("p");
         ort.className = "eintrag-ort";
@@ -1294,36 +1361,44 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, fotos: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
-// Zeigt, ob der Eintrag Thema des Tages oder Sub-Thema wird
-function istThemaImFormular() {
-  const datum = feld("eDatum").value;
-  if (!datum) return true;
-  const bisher = daten.eintraege.find(x => x.id === form.id);
-  if (bisher && bisher.datum === datum) return eintraegeAm(datum)[0].id === bisher.id;
-  return eintraegeAm(datum).filter(x => x.id !== form.id).length === 0;
+// Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
+// (mit Ort, Karte und Fotos). Pro Tag gibt es höchstens einen Haupteintrag.
+function anderesThemaAm(datum) {
+  return daten.eintraege.find(e => e.datum === datum && istThema(e) && e.id !== form.id);
 }
+function aufgeloesteArt() {
+  const datum = feld("eDatum").value;
+  if (form.art === "thema" && datum && anderesThemaAm(datum)) return "sub";
+  if (form.art === "thema" || form.art === "sub") return form.art;
+  return datum && anderesThemaAm(datum) ? "sub" : "thema";   // automatisch
+}
+function istThemaImFormular() { return aufgeloesteArt() === "thema"; }
 function renderRolle() {
   const datum = feld("eDatum").value;
-  const el = feld("eRolle");
-  if (!datum) { el.textContent = ""; feld("zielBlock").hidden = false; return; }
-  const andere = eintraegeAm(datum).filter(x => x.id !== form.id);
-  const bisher = daten.eintraege.find(x => x.id === form.id);
-  // Bestehender Eintrag behält seinen Platz, neue Einträge kommen ans Ende
-  const istThema = bisher && bisher.datum === datum
-    ? eintraegeAm(datum)[0].id === bisher.id
-    : andere.length === 0;
-  const thema = andere[0];
-  feld("zielBlock").hidden = !istThema;
-  el.textContent = istThema
-    ? "★ Thema des Tages"
-    : `▸ Sub-Thema zu „${thema.titel || thema.ort || "Thema des Tages"}“`;
+  const art = aufgeloesteArt();
+  const vorhanden = datum && anderesThemaAm(datum);
+  document.querySelectorAll("#eRolleWahl button").forEach(b => {
+    b.classList.toggle("aktiv", b.dataset.art === art);
+    b.disabled = b.dataset.art === "thema" && !!vorhanden;
+  });
+  feld("zielBlock").hidden = art !== "thema";
+  feld("ortBlock").hidden = art === "thema";
+  feld("fotoBlock").hidden = art === "thema";
+  feld("eRolle").textContent = art === "thema"
+    ? "Haupteintrag des Tages: Titel, Reiseziel und Text. Orte und Fotos kommen in die Sub-Themen."
+    : `Sub-Thema${vorhanden ? ` zu „${vorhanden.titel || "Haupteintrag"}“` : ""}: mit Ort, Karte und Fotos.`;
 }
+document.querySelectorAll("#eRolleWahl button").forEach(b => b.addEventListener("click", () => {
+  form.art = b.dataset.art;
+  renderRolle();
+}));
 function neuerEintragAm(datum) {
   formularVerwerfen().then(() => {
     formularLeeren();
+    form.art = "sub";
     feld("eDatum").value = datum;
     renderRolle();
     zeigeRegister("eintrag");
@@ -1333,6 +1408,7 @@ function neuerEintragAm(datum) {
 
 function formularLeeren() {
   form.id = null;
+  form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
   form.entfernt = new Set();
@@ -1359,6 +1435,7 @@ function bearbeiteEintrag(id) {
   if (!e) return;
   formularVerwerfen().then(() => {
     form.id = e.id;
+    form.art = e.art;
     form.fotos = [...e.fotos];
     form.neu = new Set();
     form.entfernt = new Set();
@@ -1544,17 +1621,28 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
   const text = feld("eText").value.replace(/\s+$/, "");
   meldung.className = "formular-meldung";
   if (!datum) { meldung.textContent = "Bitte ein Datum wählen."; meldung.hidden = false; return; }
+  const thema = istThemaImFormular();
+  if (thema && form.art === "thema" && anderesThemaAm(datum)) {
+    meldung.textContent = "Für diesen Tag gibt es schon einen Haupteintrag. Als Sub-Thema speichern.";
+    meldung.hidden = false;
+    return;
+  }
+  if (thema && form.fotos.length) {
+    meldung.textContent = "Ein Haupteintrag hat keine Fotos. Fotos entfernen oder als Sub-Thema speichern.";
+    meldung.hidden = false;
+    return;
+  }
   if (!titel && !text && !form.fotos.length) {
     meldung.textContent = "Bitte einen Titel, Text oder ein Foto erfassen.";
     meldung.hidden = false;
     return;
   }
   const bisher = daten.eintraege.find(x => x.id === form.id);
-  // Reiseziel gilt nur für das Thema des Tages
-  const thema = istThemaImFormular();
+  // Haupteintrag: kein Ort, keine Fotos; Sub-Thema: kein Reiseziel
   const eintrag = {
-    id: form.id || neueId(), datum, titel, ort, text,
-    lat: form.lat, lon: form.lon, fotos: [...form.fotos],
+    id: form.id || neueId(), art: thema ? "thema" : "sub", datum, titel, text,
+    ort: thema ? "" : ort,
+    lat: thema ? null : form.lat, lon: thema ? null : form.lon, fotos: thema ? [] : [...form.fotos],
     ziel: thema ? feld("eZiel").value.trim() : "",
     zielLat: thema ? form.zLat : null, zielLon: thema ? form.zLon : null,
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
@@ -1638,11 +1726,12 @@ function zeichneKarte() {
   if (st.length > 1) {
     L.polyline(st.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.9 }).addTo(karteEbene);
   }
-  st.forEach((e, i) => {
-    const icon = L.divIcon({ className: "", html: `<div class="karte-marker">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+  st.forEach((e) => {
+    // Sub-Themen tragen ihre laufende Nummer, das Reiseziel eine Flagge
+    const icon = L.divIcon({ className: "", html: `<div class="karte-marker${e.ziel ? " ziel" : ""}">${e.ziel ? "🏁" : e.nr}</div>`, iconSize: [26, 26], iconAnchor: e.ziel ? [-4, 30] : [13, 13] });   // Ziel leicht versetzt, damit es keinen Punkt verdeckt
     const inhalt = document.createElement("div");
     const b = document.createElement("strong");
-    b.textContent = `${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
+    b.textContent = `${e.ziel ? "Reiseziel" : `Nr. ${e.nr}`} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
     L.marker([e.lat, e.lon], { icon }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([e.lat, e.lon]);
@@ -1798,14 +1887,15 @@ async function statischeKarte() {
       st.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke(); g.setLineDash([]);
     }
-    st.forEach((e, i) => {
+    st.forEach((e) => {
       const [x, y] = auf([e.lat, e.lon]);
       g.beginPath(); g.arc(x, y, 17, 0, Math.PI * 2);
-      g.fillStyle = "#d4a24e"; g.fill();
+      g.fillStyle = e.ziel ? "#23262c" : "#d4a24e"; g.fill();
       g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
       g.fillStyle = "#1a1d22"; g.font = "bold 17px -apple-system, Segoe UI, Roboto, sans-serif";
       g.textAlign = "center"; g.textBaseline = "middle";
-      g.fillText(String(i + 1), x, y + 1);
+      if (e.ziel) g.fillStyle = "#d4a24e";
+      g.fillText(e.ziel ? "Z" : String(e.nr), x, y + 1);
     });
     return c.toDataURL("image/jpeg", 0.86);
   };
@@ -1874,11 +1964,16 @@ async function renderBericht() {
     const kmTag = tagKm(datum);
     kopf.textContent = `${tagLabel(datum)} · ${datumLang(datum)}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`;
     seite.appendChild(kopf);
-    for (const [ei, e] of eintraegeAm(datum).entries()) {
+    const nummern = subNummern();
+    for (const e of eintraegeAm(datum)) {
       const block = document.createElement("div");
-      block.className = "eintrag-druck" + (ei > 0 ? " sub" : "");
-      if (e.titel) { const h3 = document.createElement("h3"); h3.textContent = e.titel; block.appendChild(h3); }
-      const ortText = ei === 0 ? tagStrecke(datum) : e.ort;
+      block.className = "eintrag-druck" + (istThema(e) ? "" : " sub");
+      if (e.titel || !istThema(e)) {
+        const h3 = document.createElement("h3");
+        h3.textContent = istThema(e) ? e.titel : `${nummern.get(e.id)} · ${e.titel || e.ort || "Sub-Thema"}`;
+        block.appendChild(h3);
+      }
+      const ortText = istThema(e) ? tagStrecke(datum) : e.ort;
       if (ortText) { const o = document.createElement("p"); o.className = "ort"; o.textContent = ortText; block.appendChild(o); }
       if (e.text) { const t = document.createElement("p"); t.className = "text"; t.textContent = e.text; block.appendChild(t); }
       if (e.fotos.length) {
@@ -1993,6 +2088,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
     y += 8;
 
     const eintraege = eintraegeAm(datum);
+    const nummern = subNummern();
     for (let ei = 0; ei < eintraege.length; ei++) {
       const e = eintraege[ei];
       if (ei > 0) {
@@ -2001,26 +2097,26 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
         doc.line(R, y + 3, R + B, y + 3);
         y += 8;
       }
-      if (e.titel && ei === 0) {   // Thema des Tages
+      if (e.titel && istThema(e)) {   // Haupteintrag
         doc.setFont("helvetica", "bold"); doc.setFontSize(17); farbe(TINTE);
         const z = doc.splitTextToSize(pdfText(e.titel), B);
         platz(z.length * 7.2 + 2);
         doc.text(z, R, y + 6);
         y += z.length * 7.2 + 1;
-      } else if (e.titel) {        // Sub-Thema
+      } else if (!istThema(e)) {   // Sub-Thema mit Nummer
         doc.setFont("helvetica", "bold"); doc.setFontSize(13); farbe(TINTE);
-        const z = doc.splitTextToSize(pdfText(e.titel), B - 5);
+        const z = doc.splitTextToSize(pdfText(`${nummern.get(e.id)} · ${e.titel || e.ort || "Sub-Thema"}`), B - 5);
         platz(z.length * 5.8 + 2);
         doc.setFillColor(212, 162, 78);
         doc.rect(R, y + 1.4, 1.6, 5.2, "F");
         doc.text(z, R + 5, y + 5.5);
         y += z.length * 5.8 + 1;
       }
-      const ortText = ei === 0 ? tagStrecke(datum) : e.ort;
+      const ortText = istThema(e) ? tagStrecke(datum) : e.ort;
       if (ortText) {
         doc.setFont("helvetica", "normal"); doc.setFontSize(10); farbe(GRAU);
         platz(6);
-        doc.text(pdfText(ortText.replace("→", "-")), R + (ei === 0 ? 0 : 5), y + 4);
+        doc.text(pdfText(ortText.replace("→", "-")), R + (istThema(e) ? 0 : 5), y + 4);
         y += 6;
       }
       if (e.text) {
@@ -2117,17 +2213,24 @@ function eintragWhatsapp(e, istThema, mitReisetitel) {
   if (istThema) {
     const kmTag = tagKm(e.datum);
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);
-    if (e.ziel) z.push(`📍 ${e.ort || "?"} → 🏁 ${e.ziel}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`);
-    else if (e.ort) z.push(`📍 ${e.ort}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`);
-  } else if (e.ort) z.push(`📍 ${e.ort}`);
-  if (e.titel) z.push(istThema ? `*${e.titel}*` : `▸ *${e.titel}*`);
+    const strecke = tagStrecke(e.datum);
+    if (strecke) z.push(`🏁 ${strecke}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`);
+    else if (kmTag >= 1) z.push(`${formatZahlCH(kmTag)} km`);
+  } else if (!themaAm(e.datum) && eintraegeAm(e.datum)[0].id === e.id) {
+    z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);   // Tag ohne Haupteintrag
+  }
+  if (istThema) { if (e.titel) z.push(`*${e.titel}*`); }
+  else {
+    z.push(`▸ *${subNummern().get(e.id)} · ${e.titel || e.ort || "Sub-Thema"}*`);
+    if (e.ort && e.titel) z.push(`📍 ${e.ort}`);
+  }
   if (e.text) z.push(e.text);
   return z.join("\n").trim();
 }
 function whatsappText(tage, mitReisetitel = true) {
   const teile = [];
   tage.forEach((datum, ti) => eintraegeAm(datum).forEach((e, ei) => {
-    teile.push(eintragWhatsapp(e, ei === 0, mitReisetitel && ti === 0 && ei === 0));
+    teile.push(eintragWhatsapp(e, istThema(e), mitReisetitel && ti === 0 && ei === 0));
   }));
   return teile.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -2182,8 +2285,8 @@ async function oeffneDialogTage(tage) {
   // Schritte aufbauen: je Eintrag "Text" und (falls vorhanden) "Fotos"
   const schritte = [];
   tage.forEach((datum, ti) => eintraegeAm(datum).forEach((e, ei) => {
-    const name = ei === 0 ? `${tagLabel(datum)}` : `${tagLabel(datum)} ▸ ${e.titel || "Sub-Thema"}`;
-    schritte.push({ art: "text", name, text: eintragWhatsapp(e, ei === 0, ti === 0 && ei === 0) });
+    const name = istThema(e) ? `${tagLabel(datum)}` : `${tagLabel(datum)} ▸ ${subNummern().get(e.id)} ${e.titel || ""}`.trim();
+    schritte.push({ art: "text", name, text: eintragWhatsapp(e, istThema(e), ti === 0 && ei === 0) });
     if (e.fotos.length) schritte.push({ art: "fotos", name, eintrag: e, dateien: null });
   }));
   let pos = 0;
