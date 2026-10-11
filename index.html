@@ -124,6 +124,8 @@
   .btn-gefahr.bestaetigen { background: var(--neg); color: #fff; border-color: var(--neg); font-weight: 600; }
   .knopf-reihe { display: flex; gap: 8px; flex-wrap: wrap; }
   .knopf-reihe > * { flex: 1 1 auto; }
+  .knopf-drei { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .knopf-drei > * { padding: 0 6px; font-size: 14px; min-width: 0; }
   button:focus-visible, .tab-btn:focus-visible, label:focus-within > .foto-hinzu {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
@@ -177,7 +179,24 @@
   .tag-karte.ausgewaehlt .tag-check { background: var(--accent); border-color: var(--accent); }
   .auswahl-modus .tag-karte { cursor: pointer; }
 
-  .eintrag + .eintrag { border-top: 1px dashed var(--border); margin-top: 10px; padding-top: 10px; }
+  /* 11.10.2026: erster Eintrag eines Tages = Thema, weitere = Sub-Themen */
+  .eintrag.sub { margin-top: 12px; padding-left: 12px; border-left: 2px solid var(--accent-soft); }
+  .eintrag.thema h3 { font-size: 17px; }
+  .eintrag.sub h3 { font-size: 14.5px; }
+  .eintrag.sub h3::before { content: "▸ "; color: var(--accent); }
+  .tag-plus {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    border-radius: 12px;
+    font: inherit;
+    font-size: 11.5px;
+    padding: 2px 9px;
+    cursor: pointer;
+  }
+  .auswahl-modus .tag-plus { display: none; }
+  .rolle-hinweis { font-size: 12.5px; color: var(--accent); margin: -4px 0 0; }
   .eintrag-kopf { display: flex; align-items: flex-start; gap: 8px; }
   .eintrag-kopf h3 { font-size: 16px; font-weight: 650; margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .eintrag-ort { font-size: 12px; color: var(--text-dim); margin: 2px 0 0; }
@@ -496,6 +515,8 @@
   .seite .fotos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; display: block; background: #ece8df; }
   .seite .fotos img:only-child { grid-column: 1 / -1; aspect-ratio: auto; max-height: 420px; object-fit: contain; }
   .seite .eintrag-druck + .eintrag-druck { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e3ded3; }
+  .seite .eintrag-druck.sub h3 { font-size: 16px; }
+  .seite .eintrag-druck.sub h3::before { content: "▸ "; color: #b57d1e; }
 
   /* ── Dialog Teilen / PDF / Sicherung ──────────────────────────────── */
   #dialog {
@@ -655,6 +676,7 @@
       <label>Datum
         <input type="date" id="eDatum">
       </label>
+      <p class="rolle-hinweis" id="eRolle"></p>
       <label>Titel
         <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off">
       </label>
@@ -721,11 +743,12 @@
     </div>
 
     <h2>Bericht</h2>
-    <div class="knopf-reihe">
-      <button type="button" class="btn-speichern" id="pdfBtn">📄 Bericht als PDF</button>
+    <div class="knopf-drei">
+      <button type="button" class="btn-speichern" id="pdfBtn">📄 PDF</button>
       <button type="button" class="btn-abbrechen" id="druckBtn">🖨️ Drucken</button>
+      <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Speichern</button>
     </div>
-    <p class="hinweis" style="margin-top:8px">Am iPhone den PDF-Bericht nutzen: Er lässt sich in Dateien sichern, drucken oder per WhatsApp senden. „Drucken“ ist für den Computer gedacht.</p>
+    <p class="hinweis" style="margin-top:8px">PDF: Bericht mit Karte und Fotos zum Sichern, Drucken oder Senden. Drucken: für den Computer. Speichern: Sicherung in den OneDrive-Ordner (siehe unten).</p>
     <h2>Vorschau</h2>
     <div id="berichtDruck"></div>
 
@@ -734,7 +757,6 @@
       <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät. Die Sicherung hat immer denselben Dateinamen: Beim ersten Mal im Teilen-Menü „In Dateien sichern“ → OneDrive → <strong>02_Ferien › New Zealand Reise › Reisetagebuch</strong> wählen, danach jeweils nur noch „Ersetzen“.</p>
       <p class="hinweis" id="letzteSicherung"></p>
       <div class="knopf-reihe">
-        <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Sicherung erstellen</button>
         <label class="btn-abbrechen" for="sicherungInput" style="cursor:pointer">↺ Sicherung laden</label>
       </div>
       <input type="file" id="sicherungInput" class="unsichtbar" accept=".json,application/json">
@@ -1069,12 +1091,18 @@ function renderTagebuch() {
     const check = document.createElement("span");
     check.className = "tag-check";
     check.textContent = "✓";
-    kopf.append(nr, dat, check);
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "tag-plus";
+    plus.textContent = "＋ Sub-Thema";
+    plus.title = "Weiteren Eintrag zu diesem Tag erfassen";
+    plus.addEventListener("click", ev => { ev.stopPropagation(); neuerEintragAm(datum); });
+    kopf.append(nr, dat, plus, check);
     karte.appendChild(kopf);
 
-    for (const e of eintraegeAm(datum)) {
+    eintraegeAm(datum).forEach((e, ei) => {
       const block = document.createElement("div");
-      block.className = "eintrag";
+      block.className = "eintrag " + (ei === 0 ? "thema" : "sub");
       const ek = document.createElement("div");
       ek.className = "eintrag-kopf";
       const h3 = document.createElement("h3");
@@ -1122,7 +1150,7 @@ function renderTagebuch() {
         block.appendChild(streifen);
       }
       karte.appendChild(block);
-    }
+    });
     karte.addEventListener("click", () => {
       if (!auswahlModus) return;
       ausgewaehlt.has(datum) ? ausgewaehlt.delete(datum) : ausgewaehlt.add(datum);
@@ -1168,6 +1196,32 @@ function entwurfOffen() {
 const form = { id: null, fotos: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null };
 const feld = id => document.getElementById(id);
 
+// Zeigt, ob der Eintrag Thema des Tages oder Sub-Thema wird
+function renderRolle() {
+  const datum = feld("eDatum").value;
+  const el = feld("eRolle");
+  if (!datum) { el.textContent = ""; return; }
+  const andere = eintraegeAm(datum).filter(x => x.id !== form.id);
+  const bisher = daten.eintraege.find(x => x.id === form.id);
+  // Bestehender Eintrag behält seinen Platz, neue Einträge kommen ans Ende
+  const istThema = bisher && bisher.datum === datum
+    ? eintraegeAm(datum)[0].id === bisher.id
+    : andere.length === 0;
+  const thema = andere[0];
+  el.textContent = istThema
+    ? "★ Thema des Tages"
+    : `▸ Sub-Thema zu „${thema.titel || thema.ort || "Thema des Tages"}“`;
+}
+function neuerEintragAm(datum) {
+  formularVerwerfen().then(() => {
+    formularLeeren();
+    feld("eDatum").value = datum;
+    renderRolle();
+    zeigeRegister("eintrag");
+    feld("eTitel").focus({ preventScroll: true });
+  });
+}
+
 function formularLeeren() {
   form.id = null;
   form.fotos = [];
@@ -1180,6 +1234,7 @@ function formularLeeren() {
   feld("eOrt").value = "";
   feld("eText").value = "";
   feld("eintragKopf").textContent = "Neuer Eintrag";
+  setTimeout(renderRolle, 0);
   feld("eintragLoeschen").hidden = true;
   feld("eintragMeldung").hidden = true;
   feld("ortTreffer").innerHTML = "";
@@ -1201,6 +1256,7 @@ function bearbeiteEintrag(id) {
     feld("eOrt").value = e.ort || "";
     feld("eText").value = e.text || "";
     feld("eintragKopf").textContent = `Eintrag bearbeiten · ${datumLang(e.datum)}`;
+    renderRolle();
     feld("eintragLoeschen").hidden = false;
     feld("eintragMeldung").hidden = true;
     feld("ortTreffer").innerHTML = "";
@@ -1245,6 +1301,7 @@ function renderFormFotos() {
   ladeBilderIn(raster);
 }
 
+feld("eDatum").addEventListener("change", renderRolle);
 feld("fotoInput").addEventListener("change", async (ev) => {
   const dateien = [...ev.target.files];
   ev.target.value = "";
@@ -1666,9 +1723,9 @@ async function renderBericht() {
     kopf.className = "seite-kopf";
     kopf.textContent = `${tagLabel(datum)} · ${datumLang(datum)}`;
     seite.appendChild(kopf);
-    for (const e of eintraegeAm(datum)) {
+    for (const [ei, e] of eintraegeAm(datum).entries()) {
       const block = document.createElement("div");
-      block.className = "eintrag-druck";
+      block.className = "eintrag-druck" + (ei > 0 ? " sub" : "");
       if (e.titel) { const h3 = document.createElement("h3"); h3.textContent = e.titel; block.appendChild(h3); }
       if (e.ort) { const o = document.createElement("p"); o.className = "ort"; o.textContent = e.ort; block.appendChild(o); }
       if (e.text) { const t = document.createElement("p"); t.className = "text"; t.textContent = e.text; block.appendChild(t); }
@@ -1791,12 +1848,20 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
         doc.line(R, y + 3, R + B, y + 3);
         y += 8;
       }
-      if (e.titel) {
+      if (e.titel && ei === 0) {   // Thema des Tages
         doc.setFont("helvetica", "bold"); doc.setFontSize(17); farbe(TINTE);
         const z = doc.splitTextToSize(pdfText(e.titel), B);
         platz(z.length * 7.2 + 2);
         doc.text(z, R, y + 6);
         y += z.length * 7.2 + 1;
+      } else if (e.titel) {        // Sub-Thema
+        doc.setFont("helvetica", "bold"); doc.setFontSize(13); farbe(TINTE);
+        const z = doc.splitTextToSize(pdfText(e.titel), B - 5);
+        platz(z.length * 5.8 + 2);
+        doc.setFillColor(212, 162, 78);
+        doc.rect(R, y + 1.4, 1.6, 5.2, "F");
+        doc.text(z, R + 5, y + 5.5);
+        y += z.length * 5.8 + 1;
       }
       if (e.ort) {
         doc.setFont("helvetica", "normal"); doc.setFontSize(10); farbe(GRAU);
@@ -1890,18 +1955,23 @@ async function teileDatei(datei, titel) {
   return true;
 }
 
+// Text eines Eintrags für WhatsApp. Das Thema des Tages trägt den Tageskopf,
+// Sub-Themen sind mit ▸ markiert.
+function eintragWhatsapp(e, istThema, mitReisetitel) {
+  const z = [];
+  if (mitReisetitel) z.push(`📖 *${reiseTitel()}*`, "");
+  if (istThema) z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);
+  if (e.ort) z.push(`📍 ${e.ort}`);
+  if (e.titel) z.push(istThema ? `*${e.titel}*` : `▸ *${e.titel}*`);
+  if (e.text) z.push(e.text);
+  return z.join("\n").trim();
+}
 function whatsappText(tage, mitReisetitel = true) {
-  const teile = mitReisetitel ? [`📖 *${reiseTitel()}*`, ""] : [];
-  for (const datum of tage) {
-    teile.push(`🗓 *${tagLabel(datum)} · ${datumLang(datum)}*`);
-    for (const e of eintraegeAm(datum)) {
-      if (e.ort) teile.push(`📍 ${e.ort}`);
-      if (e.titel) teile.push(`*${e.titel}*`);
-      if (e.text) teile.push(e.text);
-      teile.push("");
-    }
-  }
-  return teile.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const teile = [];
+  tage.forEach((datum, ti) => eintraegeAm(datum).forEach((e, ei) => {
+    teile.push(eintragWhatsapp(e, ei === 0, mitReisetitel && ti === 0 && ei === 0));
+  }));
+  return teile.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
@@ -1929,86 +1999,95 @@ function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
   return knopf;
 }
 
-// 11.10.2026: Tag für Tag teilen. WhatsApp ordnet mehrere Fotos aus einem
-// einzigen Teilen-Vorgang beliebig an und hängt den Text als eigene
-// Nachricht ans Ende. Darum wird jeder Tag einzeln geteilt (Fotos des
-// Tages + sein Text) -- so bleiben Text und Fotos zusammen und in der
-// richtigen Reihenfolge. iOS verlangt dafür pro Tag ein Tippen.
-async function tagesDateien(datum, start) {
+// 11.10.2026: Schritt für Schritt teilen. WhatsApp entscheidet selbst, ob
+// bei einem Teilen-Vorgang der Text oder die Fotos zuerst kommen, und
+// ordnet mehrere Fotos beliebig an. Darum geht jeder Eintrag in zwei
+// Schritten raus: zuerst der Text, dann seine Fotos. So stehen die Fotos
+// immer unter dem passenden Text. iOS verlangt dafür pro Schritt ein Tippen.
+async function eintragDateien(e, start) {
   const dateien = [];
-  const ids = eintraegeAm(datum).flatMap(e => e.fotos).slice(0, 30);
-  for (let i = 0; i < ids.length; i++) {
-    const rec = await idb.get("fotos", ids[i]);
-    if (rec) dateien.push(new File([rec.voll], `tag-${datum}-${String(start + i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+  for (let i = 0; i < e.fotos.length && i < 30; i++) {
+    const rec = await idb.get("fotos", e.fotos[i]);
+    if (rec) dateien.push(new File([rec.voll], `${e.datum}-${String(start + i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
   }
   return dateien;
 }
 
 async function oeffneDialogTage(tage) {
-  document.getElementById("dialogKnoepfe").innerHTML = "";
+  const knoepfeEl = document.getElementById("dialogKnoepfe");
+  knoepfeEl.innerHTML = "";
   document.getElementById("dialogTitel").textContent = tage.length === 1
     ? `${tagLabel(tage[0])} teilen` : `${tage.length} Tage teilen`;
   dialogStatus("Fotos werden vorbereitet …");
   dialogEl.hidden = false;
 
-  // Pro Tag ein Knopf, in Reisereihenfolge. Der nächste offene Tag ist
-  // jeweils hervorgehoben.
-  const knoepfe = [];
-  const markiereNaechsten = () => {
-    const naechster = knoepfe.find(k => !k.erledigt && !k.btn.disabled);
-    knoepfe.forEach(k => { k.btn.className = k === naechster ? "btn-speichern" : "btn-abbrechen"; });
-    if (!naechster && knoepfe.every(k => k.erledigt)) dialogStatus("Alle Tage geteilt.");
-  };
-  for (let i = 0; i < tage.length; i++) {
-    const datum = tage[i];
-    const eintrag = { datum, dateien: [], erledigt: false };
-    // Beim ersten Tag steht der Reisetitel dabei
-    eintrag.text = whatsappText([datum], i === 0);
-    eintrag.btn = dialogKnopf(`💬 ${tagLabel(datum)} · ${datumKurz(datum)}`, "btn-abbrechen", async () => {
-      try { navigator.clipboard && navigator.clipboard.writeText(eintrag.text); } catch { /* egal */ }
-      try {
-        if (eintrag.dateien.length && navigator.canShare && navigator.canShare({ files: eintrag.dateien })) {
-          await navigator.share({ files: eintrag.dateien, text: eintrag.text });
-        } else if (navigator.share) {
-          await navigator.share({ text: eintrag.text });
-        } else {
-          window.open(`https://wa.me/?text=${encodeURIComponent(eintrag.text)}`, "_blank", "noopener");
-        }
-        eintrag.erledigt = true;
-        eintrag.btn.textContent = `✓ ${tagLabel(datum)} · ${datumKurz(datum)} geteilt`;
-        const offen = knoepfe.filter(k => !k.erledigt).length;
-        dialogStatus(offen ? `Weiter mit dem nächsten Tag (${offen} offen). Fehlt in WhatsApp der Text: ins Eingabefeld tippen und „Einsetzen“ wählen.` : "");
-        markiereNaechsten();
-      } catch (e) {
-        if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. PDF versuchen.");
-      }
-    });
-    eintrag.btn.disabled = true;
-    knoepfe.push(eintrag);
-  }
-  dialogKnopf("💬 Nur Text (alle Tage)", "btn-abbrechen", async () => {
+  // Schritte aufbauen: je Eintrag "Text" und (falls vorhanden) "Fotos"
+  const schritte = [];
+  tage.forEach((datum, ti) => eintraegeAm(datum).forEach((e, ei) => {
+    const name = ei === 0 ? `${tagLabel(datum)}` : `${tagLabel(datum)} ▸ ${e.titel || "Sub-Thema"}`;
+    schritte.push({ art: "text", name, text: eintragWhatsapp(e, ei === 0, ti === 0 && ei === 0) });
+    if (e.fotos.length) schritte.push({ art: "fotos", name, eintrag: e, dateien: null });
+  }));
+  let pos = 0;
+
+  const weiter = dialogKnopf("", "btn-speichern", () => fuehreAus());
+  const ueberspringen = dialogKnopf("Diesen Schritt überspringen", "btn-abbrechen", () => { pos++; zeigeSchritt(); });
+  dialogKnopf("💬 Nur Text (alles in einer Nachricht)", "btn-abbrechen", async () => {
     const text = whatsappText(tage);
-    if (navigator.share) {
-      try { await navigator.share({ text }); } catch { /* abgebrochen */ }
-    } else {
-      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
-    }
+    if (navigator.share) { try { await navigator.share({ text }); } catch { /* abgebrochen */ } }
+    else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   });
   pdfKnopf(tage, false, `${dateiName(reiseTitel())}-${tage.length === 1 ? dateiName(tagLabel(tage[0])) : tage.length + "-tage"}`);
   dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
 
-  let nr = 0;
-  for (const k of knoepfe) {
-    k.dateien = await tagesDateien(k.datum, nr);
-    nr += k.dateien.length;
-    const n = k.dateien.length;
-    k.btn.textContent = `💬 ${tagLabel(k.datum)} · ${datumKurz(k.datum)} · ${n ? `${n} Foto${n === 1 ? "" : "s"} + Text` : "nur Text"}`;
-    k.btn.disabled = false;
+  function zeigeSchritt() {
+    if (pos >= schritte.length) {
+      weiter.textContent = "✓ Alles geteilt";
+      weiter.disabled = true;
+      ueberspringen.hidden = true;
+      dialogStatus("Fertig. Text und Fotos sind in der richtigen Reihenfolge verschickt.");
+      return;
+    }
+    const st = schritte[pos];
+    const n = st.dateien ? st.dateien.length : st.eintrag ? st.eintrag.fotos.length : 0;
+    weiter.textContent = st.art === "text"
+      ? `▶ ${st.name} · Text senden`
+      : `▶ ${st.name} · ${n} Foto${n === 1 ? "" : "s"} senden`;
+    weiter.disabled = st.art === "fotos" && !st.dateien;
+    ueberspringen.hidden = false;
+    dialogStatus(`Schritt ${pos + 1} von ${schritte.length}. Nach dem Senden in WhatsApp hier mit dem nächsten Schritt weiter.`);
   }
-  markiereNaechsten();
-  dialogStatus(tage.length === 1
-    ? "Bereit. Fotos und Text gehen zusammen an WhatsApp."
-    : "Jeden Tag einzeln antippen, von oben nach unten. So bleiben Text und Fotos eines Tages zusammen.");
+
+  async function fuehreAus() {
+    const st = schritte[pos];
+    if (!st) return;
+    try {
+      if (st.art === "text") {
+        if (navigator.share) await navigator.share({ text: st.text });
+        else window.open(`https://wa.me/?text=${encodeURIComponent(st.text)}`, "_blank", "noopener");
+      } else {
+        if (!(navigator.canShare && navigator.canShare({ files: st.dateien }))) {
+          dialogStatus("Dieses Gerät kann keine Fotos teilen. Schritt überspringen oder PDF nutzen.");
+          return;
+        }
+        await navigator.share({ files: st.dateien });
+      }
+      pos++;
+      zeigeSchritt();
+    } catch (e) {
+      if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. Nochmals versuchen oder PDF nutzen.");
+    }
+  }
+
+  zeigeSchritt();
+  // Fotos im Hintergrund vorbereiten
+  let nr = 0;
+  for (const st of schritte) {
+    if (st.art !== "fotos") continue;
+    st.dateien = await eintragDateien(st.eintrag, nr);
+    nr += st.dateien.length;
+    if (schritte[pos] === st) zeigeSchritt();
+  }
 }
 
 document.getElementById("pdfBtn").addEventListener("click", () => {
