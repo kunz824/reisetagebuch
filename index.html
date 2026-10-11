@@ -1,0 +1,2122 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Reisetagebuch</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tagebuch">
+<meta name="theme-color" content="#10141b">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  /* Layout: Register-App im Stil von Tinu-Trading / Reise Budgetplaner --
+     eine Spalte (max. 640px), feste Tabbar unten mit Einbuchtung.
+     Am Bildschirm dunkel; der Bericht ist bewusst "Papier" (hell),
+     damit Vorschau und Ausdruck gleich aussehen. */
+  :root {
+    --bg: #10141b;
+    --bg-panel: #171d27;
+    --bg-panel-2: #1c2431;
+    --border: #262f3d;
+    --text: #e7e6e2;
+    --text-dim: #8b93a3;
+    --accent: #d4a24e;
+    --accent-soft: rgba(212, 162, 78, 0.35);
+    --track: #5aa9bb;
+    --pos: #4caf7d;
+    --neg: #e0605a;
+    --tabbar: #2b2e34;
+    --tabbar-platte: #33363d;
+    --feld-hoehe: 46px;
+    --papier: #fbfaf7;
+    --tinte: #23262c;
+    --tinte-dim: #7a7466;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-tagebuch: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* sonst überdeckt z.B. die Fotoansicht alles */
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    padding-inline: 16px;
+    padding-block: calc(22px + env(safe-area-inset-top, 0px)) 130px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .register { display: none; }
+  .register.aktiv { display: block; }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+  h1 .unterzeile {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-dim);
+    margin-top: 3px;
+    letter-spacing: 0;
+  }
+  h2 { font-size: 14px; color: var(--text-dim); font-weight: 500; margin: 22px 0 10px; }
+
+  /* ── Kacheln ──────────────────────────────────────────────────────── */
+  .stats-reihe {
+    display: grid;
+    grid-template-columns: repeat(var(--spalten, 4), minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .stat {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px 9px;
+    min-width: 0;
+  }
+  .stat .label { color: var(--text-dim); font-size: 11px; margin: 0 0 3px; }
+  .stat .zahl {
+    font-size: 17px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Knöpfe ───────────────────────────────────────────────────────── */
+  .btn-speichern, .btn-abbrechen, .btn-gefahr {
+    height: var(--feld-hoehe);
+    padding: 0 16px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn-speichern { background: var(--accent); color: var(--bg); border: none; font-weight: 600; }
+  .btn-speichern:disabled { opacity: 0.5; cursor: default; }
+  .btn-abbrechen { background: none; color: var(--text); border: 1px solid var(--border); }
+  .btn-abbrechen.aktiv { border-color: var(--accent); color: var(--accent); }
+  .btn-gefahr { background: none; color: var(--neg); border: 1px solid rgba(224, 96, 90, 0.4); }
+  .btn-gefahr.bestaetigen { background: var(--neg); color: #fff; border-color: var(--neg); font-weight: 600; }
+  .knopf-reihe { display: flex; gap: 8px; flex-wrap: wrap; }
+  .knopf-reihe > * { flex: 1 1 auto; }
+  button:focus-visible, .tab-btn:focus-visible, label:focus-within > .foto-hinzu {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ── Tagebuch: Tageskarten ────────────────────────────────────────── */
+  .werkzeugleiste { display: flex; gap: 8px; margin: 12px 0 14px; }
+  .werkzeugleiste .btn-speichern { flex: 1; }
+  #tagListe { display: flex; flex-direction: column; gap: 10px; }
+  .tag-karte {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px 12px;
+    position: relative;
+  }
+  .tag-karte.ausgewaehlt { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .tag-kopf {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .tag-nr {
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 700;
+    font-size: 11px;
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tag-nr.vorab { background: var(--bg-panel-2); color: var(--text-dim); }
+  .tag-datum { color: var(--text); font-weight: 600; }
+  .tag-check {
+    margin-left: auto;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid var(--text-dim);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: var(--bg);
+  }
+  .auswahl-modus .tag-check { display: inline-flex; }
+  .tag-karte.ausgewaehlt .tag-check { background: var(--accent); border-color: var(--accent); }
+  .auswahl-modus .tag-karte { cursor: pointer; }
+
+  .eintrag + .eintrag { border-top: 1px dashed var(--border); margin-top: 10px; padding-top: 10px; }
+  .eintrag-kopf { display: flex; align-items: flex-start; gap: 8px; }
+  .eintrag-kopf h3 { font-size: 16px; font-weight: 650; margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .eintrag-ort { font-size: 12px; color: var(--text-dim); margin: 2px 0 0; }
+  .eintrag-text {
+    font-family: var(--font-tagebuch);
+    font-size: 16px;
+    line-height: 1.5;
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 5;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .eintrag-text.offen { display: block; }
+  .mehr-link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 12.5px;
+    padding: 2px 0;
+    cursor: pointer;
+  }
+  .btn-klein {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+  .foto-streifen {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    margin-top: 9px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .foto-streifen img {
+    width: 84px;
+    height: 84px;
+    object-fit: cover;
+    border-radius: 7px;
+    flex-shrink: 0;
+    background: var(--bg-panel-2);
+    cursor: zoom-in;
+  }
+  .leer { color: var(--text-dim); font-size: 13.5px; padding: 26px 12px; text-align: center; margin: 0; line-height: 1.5; }
+
+  /* Auswahlleiste zum Teilen (über der Tabbar) */
+  #teilenLeiste {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+    z-index: 11;
+    display: flex;
+    justify-content: center;
+    padding: 0 16px;
+    pointer-events: none;
+  }
+  #teilenLeiste > div {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 608px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--accent-soft);
+    border-radius: 12px;
+    padding: 8px 8px 8px 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+  #teilenLeiste span { flex: 1; font-size: 13.5px; }
+  #teilenLeiste .btn-speichern, #teilenLeiste .btn-abbrechen { height: 38px; font-size: 14px; }
+
+  /* ── Formulare ────────────────────────────────────────────────────── */
+  .formular {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .formular-reihe { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .formular label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); min-width: 0; }
+  .formular input[type="text"], .formular input[type="date"], .formular input[type="search"] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    height: var(--feld-hoehe);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 10px;
+    margin: 0;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 16px;   /* 16px verhindert das automatische Zoomen von iOS */
+    width: 100%;
+    min-width: 0;
+  }
+  .formular input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+  .formular textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-family: var(--font-tagebuch);
+    font-size: 17px;
+    line-height: 1.5;
+    min-height: 180px;
+    resize: vertical;
+    width: 100%;
+  }
+  .formular input:focus, .formular textarea:focus {
+    outline: 2px solid var(--accent-soft);
+    outline-offset: 0;
+    border-color: var(--accent);
+  }
+  .ort-zeile { display: flex; gap: 6px; }
+  .ort-zeile input { flex: 1; }
+  .ort-zeile button {
+    width: var(--feld-hoehe);
+    height: var(--feld-hoehe);
+    flex-shrink: 0;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .ort-info { font-size: 12.5px; color: var(--text-dim); margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .ort-info .link { background: none; border: none; color: var(--accent); font: inherit; padding: 0; cursor: pointer; }
+  #ortTreffer { display: flex; flex-direction: column; gap: 4px; }
+  #ortTreffer button {
+    text-align: left;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 9px 10px;
+    font: inherit;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  #ortTreffer button small { display: block; color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+  .hinweis { font-size: 12.5px; color: var(--text-dim); margin: 0; line-height: 1.45; }
+  .formular-meldung { font-size: 12.5px; color: var(--neg); margin: 0; }
+  .formular-meldung.ok { color: var(--pos); }
+
+  .foto-raster { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .foto-kachel { position: relative; aspect-ratio: 1; max-width: 100%; }
+  .foto-kachel img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: var(--bg-panel-2); display: block; }
+  .foto-kachel .weg {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(16, 20, 27, 0.8);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .foto-hinzu {
+    aspect-ratio: 1;
+    border: 1.5px dashed var(--accent-soft);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+    text-align: center;
+    padding: 4px;
+  }
+  .foto-hinzu span { font-size: 24px; line-height: 1; }
+  .unsichtbar { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+  /* ── Route ────────────────────────────────────────────────────────── */
+  #karte {
+    height: 58vh;
+    min-height: 320px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    overflow: hidden;
+  }
+  .leaflet-container { font-family: var(--font); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-panel-2); color: var(--text); }
+  .leaflet-popup-content { margin: 10px 12px; font-size: 13px; }
+  .leaflet-container a.leaflet-popup-close-button { color: var(--text-dim); }
+  .leaflet-control-attribution { background: rgba(16, 20, 27, 0.7) !important; color: var(--text-dim) !important; font-size: 9px; }
+  .leaflet-control-attribution a { color: var(--text-dim) !important; }
+  .leaflet-bar a { background: var(--bg-panel-2); color: var(--text); border-color: var(--border); }
+  .karte-marker {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--bg);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  }
+  .liste { display: flex; flex-direction: column; gap: 6px; }
+  .listen-zeile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 8px 8px 12px;
+    font-size: 13.5px;
+  }
+  .listen-zeile .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .listen-zeile .zusatz { color: var(--text-dim); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .listen-zeile .btn-loeschen {
+    background: none;
+    border: none;
+    color: var(--neg);
+    font-size: 14px;
+    padding: 4px 7px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .listen-zeile .btn-loeschen.bestaetigen { background: var(--neg); color: #fff; font-size: 12px; font-weight: 600; }
+
+  /* ── Bericht (Papier) ─────────────────────────────────────────────── */
+  #berichtDruck { display: flex; flex-direction: column; gap: 12px; }
+  .seite {
+    background: var(--papier);
+    color: var(--tinte);
+    border-radius: 6px;
+    padding: 26px 22px 22px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+  .seite h2, .seite h3 { color: var(--tinte); margin: 0; }
+  .deckblatt h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; text-wrap: balance; }
+  .deckblatt .unter { font-family: var(--font-tagebuch); font-size: 17px; color: var(--tinte-dim); margin: 6px 0 0; }
+  .deckblatt .fakten {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin: 14px 0 16px;
+    font-size: 12.5px;
+    color: var(--tinte-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .deckblatt .fakten strong { color: var(--tinte); }
+  .deckblatt figure { margin: 0; }
+  .deckblatt figure img { width: 100%; border-radius: 4px; display: block; }
+  .deckblatt figcaption { font-size: 10.5px; color: var(--tinte-dim); margin-top: 5px; }
+  .karte-platzhalter {
+    aspect-ratio: 14 / 9;
+    max-width: 100%;
+    background: #ece8df;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12.5px;
+    color: var(--tinte-dim);
+  }
+  .seite-kopf {
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--tinte-dim);
+    margin: 0 0 6px;
+  }
+  .seite h3 { font-size: 21px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
+  .seite .ort { font-size: 12.5px; color: var(--tinte-dim); margin: 3px 0 0; }
+  .seite .text { font-family: var(--font-tagebuch); font-size: 15.5px; line-height: 1.55; white-space: pre-wrap; margin: 10px 0 0; overflow-wrap: anywhere; }
+  .seite .fotos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+  .seite .fotos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; display: block; background: #ece8df; }
+  .seite .fotos img:only-child { grid-column: 1 / -1; aspect-ratio: auto; max-height: 420px; object-fit: contain; }
+  .seite .eintrag-druck + .eintrag-druck { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e3ded3; }
+
+  /* ── Dialog Teilen / PDF / Sicherung ──────────────────────────────── */
+  #dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(5, 7, 10, 0.72);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  #dialog .platte {
+    width: 100%;
+    max-width: 520px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #dialog h3 { margin: 0; font-size: 16px; }
+  #dialog .knopf-spalte { display: flex; flex-direction: column; gap: 8px; }
+  #dialog .knopf-spalte > * { width: 100%; }
+
+  /* ── Fotoansicht ──────────────────────────────────────────────────── */
+  #lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.94);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  #lightbox button {
+    position: absolute;
+    background: rgba(40, 44, 52, 0.75);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+    cursor: pointer;
+  }
+  #lbZu { top: calc(14px + env(safe-area-inset-top, 0px)); right: 14px; }
+  #lbZurueck { left: 10px; top: 50%; transform: translateY(-50%); }
+  #lbVor { right: 10px; top: 50%; transform: translateY(-50%); }
+
+  /* ── Tabbar (aus der Tinu-Trading-Vorlage) ────────────────────────── */
+  #tabBar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-start;
+    gap: 4px;
+    background: var(--tabbar);
+    padding: 14px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+    z-index: 10;
+    --tab-x: 60px;
+  }
+  #tabBarPlatte { position: absolute; top: 0; left: 0; width: 100%; height: 62px; z-index: -1; display: block; }
+  .tab-welle {
+    position: absolute;
+    left: calc(var(--tab-x) - 16px);
+    top: -4px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 0%, var(--accent-soft) 65%, transparent 100%);
+    transition: left 0.25s ease;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .stand-anzeige { position: absolute; top: 3px; right: 10px; font-size: 9px; color: var(--text-dim); white-space: nowrap; z-index: 2; }
+  .tab-btn {
+    background: none;
+    border: none;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    flex: 1;
+    max-width: 96px;
+    position: relative;
+    z-index: 2;
+    transition: transform 0.25s ease;
+  }
+  .tab-btn.aktiv { transform: translateY(-20px); }
+  .tab-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 19px;
+    transition: transform 0.25s ease, filter 0.2s ease;
+    filter: grayscale(1) opacity(0.75);
+  }
+  .tab-btn.aktiv .tab-icon { transform: translateY(2px) scale(1.05); filter: none; }
+  .tab-label { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+  .tab-btn.aktiv .tab-label { color: var(--text); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tab-btn, .tab-icon, .tab-welle { transition: none; }
+  }
+
+  /* ── Druck: nur der Bericht, hell, eine Seite je Tag ──────────────── */
+  @media print {
+    @page { size: A4; margin: 14mm 14mm 16mm; }
+    :root { color-scheme: light; }
+    body { background: #fff; color: #000; }
+    main { padding: 0; max-width: none; }
+    #tabBar, #teilenLeiste, #dialog, #lightbox, main > h1,
+    .register:not(#register-bericht), #register-bericht > :not(#berichtDruck) { display: none !important; }
+    #register-bericht { display: block !important; }
+    #berichtDruck { gap: 0; }
+    .seite { box-shadow: none; border-radius: 0; padding: 0; background: #fff; break-after: page; }
+    .seite:last-child { break-after: auto; }
+    .seite .fotos img, .eintrag-druck { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<main>
+  <h1><span id="kopfTitel">Reisetagebuch</span><span class="unterzeile" id="kopfZeitraum"></span></h1>
+
+  <!-- ── Register 1: Tagebuch ──────────────────────────────────────── -->
+  <section id="register-tagebuch" class="register aktiv">
+    <div class="stats-reihe">
+      <div class="stat"><p class="label">Reisetage</p><p class="zahl" id="sTage">–</p></div>
+      <div class="stat"><p class="label">Einträge</p><p class="zahl" id="sEintraege">–</p></div>
+      <div class="stat"><p class="label">Fotos</p><p class="zahl" id="sFotos">–</p></div>
+      <div class="stat"><p class="label">km</p><p class="zahl" id="sKm">–</p></div>
+    </div>
+    <div class="werkzeugleiste">
+      <button type="button" class="btn-speichern" id="neuerEintragBtn">＋ Neuer Eintrag</button>
+      <button type="button" class="btn-abbrechen" id="auswahlBtn">💬 Teilen</button>
+    </div>
+    <div id="tagListe"></div>
+    <p class="leer" id="tagListeLeer" hidden>Noch keine Einträge.<br>Tippe auf „Neuer Eintrag“ und halte den ersten Reisetag fest.</p>
+  </section>
+
+  <!-- ── Register 2: Eintrag ───────────────────────────────────────── -->
+  <section id="register-eintrag" class="register">
+    <h2 id="eintragKopf" style="margin-top:0">Neuer Eintrag</h2>
+    <form class="formular" id="eintragFormular" novalidate>
+      <label>Datum
+        <input type="date" id="eDatum">
+      </label>
+      <label>Titel
+        <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off">
+      </label>
+      <label>Ort
+        <span class="ort-zeile">
+          <input type="search" id="eOrt" maxlength="60" placeholder="z.B. Kyoto" autocomplete="off" enterkeyhint="search">
+          <button type="button" id="ortGps" title="Aktuellen Standort übernehmen" aria-label="Aktuellen Standort übernehmen">📍</button>
+          <button type="button" id="ortSuchen" title="Ort auf der Karte suchen" aria-label="Ort auf der Karte suchen">🔍</button>
+        </span>
+      </label>
+      <div id="ortTreffer"></div>
+      <p class="ort-info" id="ortInfo"></p>
+      <label>Tagebuch
+        <textarea id="eText" placeholder="Was hast du heute erlebt?"></textarea>
+      </label>
+      <div>
+        <p class="hinweis" style="margin-bottom:6px">Fotos</p>
+        <div class="foto-raster" id="formFotos"></div>
+        <input type="file" id="fotoInput" class="unsichtbar" accept="image/*" multiple>
+      </div>
+      <p class="formular-meldung" id="eintragMeldung" hidden></p>
+      <div class="knopf-reihe">
+        <button type="submit" class="btn-speichern" id="eintragSpeichern">Eintrag speichern</button>
+        <button type="button" class="btn-abbrechen" id="eintragAbbrechen">Verwerfen</button>
+      </div>
+      <button type="button" class="btn-gefahr" id="eintragLoeschen" hidden>Eintrag löschen</button>
+    </form>
+  </section>
+
+  <!-- ── Register 3: Route ─────────────────────────────────────────── -->
+  <section id="register-route" class="register">
+    <div class="stats-reihe" style="--spalten:3;">
+      <div class="stat"><p class="label">Stationen</p><p class="zahl" id="rStationen">–</p></div>
+      <div class="stat"><p class="label">km Luftlinie</p><p class="zahl" id="rKm">–</p></div>
+      <div class="stat"><p class="label">km Tracks</p><p class="zahl" id="rTrackKm">–</p></div>
+    </div>
+    <div id="karte" style="margin-top:6px"></div>
+    <p class="hinweis" style="margin-top:8px">Die Stationen kommen aus den Einträgen (📍 oder 🔍 beim Ort). Gestrichelt: Verbindung der Stationen. Blau: aufgezeichnete Tracks.</p>
+
+    <h2>Tracks (GPX)</h2>
+    <div class="liste" id="trackListe"></div>
+    <div class="knopf-reihe" style="margin-top:8px">
+      <label class="btn-abbrechen" for="gpxInput" style="cursor:pointer">＋ GPX-Datei laden</label>
+    </div>
+    <input type="file" id="gpxInput" class="unsichtbar" accept=".gpx,application/gpx+xml,application/xml,text/xml">
+    <p class="formular-meldung" id="gpxMeldung" hidden></p>
+  </section>
+
+  <!-- ── Register 4: Bericht ───────────────────────────────────────── -->
+  <section id="register-bericht" class="register">
+    <h2 style="margin-top:0">Reise</h2>
+    <div class="formular">
+      <label>Titel der Reise
+        <input type="text" id="rTitel" maxlength="80" placeholder="z.B. Japan 2027" autocomplete="off">
+      </label>
+      <label>Untertitel
+        <input type="text" id="rUntertitel" maxlength="120" placeholder="z.B. Mit Marianne von Tokio nach Osaka" autocomplete="off">
+      </label>
+      <div class="formular-reihe">
+        <label>Start <input type="date" id="rStart"></label>
+        <label>Ende <input type="date" id="rEnde"></label>
+      </div>
+      <p class="hinweis">Der Start bestimmt die Tagnummern (Tag 1, Tag 2 …).</p>
+    </div>
+
+    <h2>Bericht</h2>
+    <div class="knopf-reihe">
+      <button type="button" class="btn-speichern" id="pdfBtn">📄 Bericht als PDF</button>
+      <button type="button" class="btn-abbrechen" id="druckBtn">🖨️ Drucken</button>
+    </div>
+    <p class="hinweis" style="margin-top:8px">Am iPhone den PDF-Bericht nutzen: Er lässt sich in Dateien sichern, drucken oder per WhatsApp senden. „Drucken“ ist für den Computer gedacht.</p>
+    <h2>Vorschau</h2>
+    <div id="berichtDruck"></div>
+
+    <h2>Datensicherung</h2>
+    <div class="formular">
+      <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät. Erstelle unterwegs ab und zu eine Sicherung (z.B. in iCloud Drive), damit nichts verloren geht, wenn das Telefon verloren geht.</p>
+      <div class="knopf-reihe">
+        <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Sicherung erstellen</button>
+        <label class="btn-abbrechen" for="sicherungInput" style="cursor:pointer">↺ Sicherung laden</label>
+      </div>
+      <input type="file" id="sicherungInput" class="unsichtbar" accept=".json,application/json">
+      <p class="formular-meldung" id="sicherungMeldung" hidden></p>
+      <button type="button" class="btn-gefahr" id="sicherungErsetzen" hidden>Alles ersetzen</button>
+    </div>
+  </section>
+</main>
+
+<div id="teilenLeiste" hidden>
+  <div>
+    <span id="teilenAnzahl">0 Tage ausgewählt</span>
+    <button type="button" class="btn-speichern" id="teilenStart" disabled>Teilen</button>
+    <button type="button" class="btn-abbrechen" id="teilenFertig">Fertig</button>
+  </div>
+</div>
+
+<div id="dialog" hidden>
+  <div class="platte" role="dialog" aria-modal="true" aria-labelledby="dialogTitel">
+    <h3 id="dialogTitel">Teilen</h3>
+    <p class="hinweis" id="dialogStatus"></p>
+    <div class="knopf-spalte" id="dialogKnoepfe"></div>
+  </div>
+</div>
+
+<div id="lightbox" hidden>
+  <img id="lbBild" alt="">
+  <button type="button" id="lbZurueck" aria-label="Vorheriges Foto">‹</button>
+  <button type="button" id="lbVor" aria-label="Nächstes Foto">›</button>
+  <button type="button" id="lbZu" aria-label="Schliessen">✕</button>
+</div>
+
+<nav id="tabBar">
+  <svg id="tabBarPlatte" viewBox="0 0 400 62" preserveAspectRatio="none" aria-hidden="true">
+    <path id="tabBarPfad" style="fill:var(--tabbar-platte);stroke:var(--border)" stroke-width="0.6"></path>
+  </svg>
+  <span class="tab-welle"></span>
+  <span class="stand-anzeige" id="speicherStand">💾 auf diesem Gerät</span>
+  <button class="tab-btn aktiv" data-register="tagebuch" type="button">
+    <span class="tab-icon" aria-hidden="true">📖</span><span class="tab-label">Tagebuch</span>
+  </button>
+  <button class="tab-btn" data-register="eintrag" type="button">
+    <span class="tab-icon" aria-hidden="true">✏️</span><span class="tab-label">Eintrag</span>
+  </button>
+  <button class="tab-btn" data-register="route" type="button">
+    <span class="tab-icon" aria-hidden="true">🗺️</span><span class="tab-label">Route</span>
+  </button>
+  <button class="tab-btn" data-register="bericht" type="button">
+    <span class="tab-icon" aria-hidden="true">🖨️</span><span class="tab-label">Bericht</span>
+  </button>
+</nav>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════
+// Reisetagebuch (11.10.2026)
+// Alles bleibt auf dem Gerät (IndexedDB): kein JSONBin, keine Schlüssel
+// im öffentlichen Code. Fotos werden beim Hinzufügen verkleinert und in
+// zwei Grössen gespeichert: "voll" (1600 px, für Ansicht und WhatsApp)
+// und "klein" (640 px, für Listen, Bericht und PDF).
+// ═════════════════════════════════════════════════════════════════════
+
+const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+const KACHELN_DUNKEL = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const KACHELN_HELL = (z, x, y) => `https://a.basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
+const KARTEN_QUELLE = "© OpenStreetMap-Mitwirkende © CARTO";
+
+// ── Datum / Zahlen ───────────────────────────────────────────────────
+function heuteISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function tageZwischen(a, b) {
+  const [j1, m1, t1] = a.split("-").map(Number);
+  const [j2, m2, t2] = b.split("-").map(Number);
+  return Math.round((Date.UTC(j2, m2 - 1, t2) - Date.UTC(j1, m1 - 1, t1)) / 86400000);
+}
+function datumLang(iso) {
+  return new Date(iso + "T00:00:00").toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
+}
+function datumKurz(iso) {
+  return new Date(iso + "T00:00:00").toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit" });
+}
+function formatZahlCH(wert, nachkomma = 0) {
+  const teile = Math.abs(wert).toFixed(nachkomma).split(".");
+  teile[0] = teile[0].replace(/\B(?=(\d{3})+(?!\d))/g, "'");
+  return (wert < 0 ? "−" : "") + teile.join(".");
+}
+function neueId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function dateiName(text) {
+  return (text || "reisetagebuch").toLowerCase()
+    .replace(/[äöü]/g, c => ({ ä: "ae", ö: "oe", ü: "ue" }[c]))
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "reisetagebuch";
+}
+function km(a, b) {   // Luftlinie (Haversine)
+  const r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+function streckeKm(punkte) {
+  let s = 0;
+  for (let i = 1; i < punkte.length; i++) s += km(punkte[i - 1], punkte[i]);
+  return s;
+}
+
+// ── IndexedDB ────────────────────────────────────────────────────────
+let dbVersprechen = null;
+function db() {
+  if (!dbVersprechen) {
+    dbVersprechen = new Promise((ok, fehler) => {
+      const anfrage = indexedDB.open("reisetagebuch", 1);
+      anfrage.onupgradeneeded = () => {
+        const d = anfrage.result;
+        if (!d.objectStoreNames.contains("daten")) d.createObjectStore("daten");
+        if (!d.objectStoreNames.contains("fotos")) d.createObjectStore("fotos", { keyPath: "id" });
+      };
+      anfrage.onsuccess = () => ok(anfrage.result);
+      anfrage.onerror = () => fehler(anfrage.error);
+    });
+  }
+  return dbVersprechen;
+}
+async function transaktion(speicher, modus, arbeit) {
+  const d = await db();
+  return new Promise((ok, fehler) => {
+    const t = d.transaction(speicher, modus);
+    let ergebnis;
+    const anfrage = arbeit(t.objectStore(speicher));
+    if (anfrage) anfrage.onsuccess = () => { ergebnis = anfrage.result; };
+    t.oncomplete = () => ok(ergebnis);
+    t.onerror = () => fehler(t.error);
+    t.onabort = () => fehler(t.error);
+  });
+}
+const idb = {
+  get: (s, k) => transaktion(s, "readonly", st => st.get(k)),
+  put: (s, wert, k) => transaktion(s, "readwrite", st => (k === undefined ? st.put(wert) : st.put(wert, k))),
+  del: (s, k) => transaktion(s, "readwrite", st => st.delete(k)),
+  alle: s => transaktion(s, "readonly", st => st.getAll()),
+  leeren: s => transaktion(s, "readwrite", st => st.clear()),
+};
+
+// ── Daten ────────────────────────────────────────────────────────────
+// { reise: {titel, untertitel, start, ende},
+//   eintraege: [{id, datum, titel, ort, lat, lon, text, fotos:[id], erstellt}],
+//   tracks: [{id, name, punkte:[[lat,lon]], km}] }
+function leereDaten() {
+  return { reise: { titel: "", untertitel: "", start: "", ende: "" }, eintraege: [], tracks: [] };
+}
+function normalisiere(roh) {
+  const d = Object.assign(leereDaten(), roh || {});
+  d.reise = Object.assign(leereDaten().reise, d.reise || {});
+  d.eintraege = Array.isArray(d.eintraege) ? d.eintraege : [];
+  d.eintraege.forEach(e => { e.fotos = Array.isArray(e.fotos) ? e.fotos : []; });
+  d.tracks = Array.isArray(d.tracks) ? d.tracks : [];
+  return d;
+}
+let daten = leereDaten();
+
+function setzeStand(text) { document.getElementById("speicherStand").textContent = text; }
+
+async function speichere() {
+  try {
+    await idb.put("daten", daten, "tagebuch");
+    setzeStand("💾 auf diesem Gerät");
+  } catch (fehler) {
+    setzeStand("⚠ Speichern fehlgeschlagen");
+    console.error(fehler);
+  }
+  berichtVeraltet = true;
+  renderAlles();
+}
+
+function reiseTitel() { return daten.reise.titel || "Reisetagebuch"; }
+function eintraegeSortiert() {
+  return [...daten.eintraege].sort((a, b) => a.datum.localeCompare(b.datum) || (a.erstellt || 0) - (b.erstellt || 0));
+}
+function tageMitEintraegen() { return [...new Set(eintraegeSortiert().map(e => e.datum))]; }
+function eintraegeAm(datum) { return eintraegeSortiert().filter(e => e.datum === datum); }
+function tagNummer(datum) {
+  if (daten.reise.start) {
+    const n = tageZwischen(daten.reise.start, datum) + 1;
+    return n >= 1 ? n : null;
+  }
+  return tageMitEintraegen().indexOf(datum) + 1;
+}
+function tagLabel(datum) { const n = tagNummer(datum); return n ? `Tag ${n}` : "Vor der Reise"; }
+function stationen() {
+  return eintraegeSortiert().filter(e => Number.isFinite(e.lat) && Number.isFinite(e.lon));
+}
+function anzahlReisetage() {
+  if (daten.reise.start && daten.reise.ende && daten.reise.ende >= daten.reise.start) {
+    return tageZwischen(daten.reise.start, daten.reise.ende) + 1;
+  }
+  return tageMitEintraegen().length;
+}
+function kennzahlen() {
+  const st = stationen();
+  return {
+    tage: anzahlReisetage(),
+    eintraege: daten.eintraege.length,
+    fotos: daten.eintraege.reduce((s, e) => s + e.fotos.length, 0),
+    kmRoute: streckeKm(st.map(e => [e.lat, e.lon])),
+    kmTracks: daten.tracks.reduce((s, t) => s + (t.km || 0), 0),
+    stationen: st.length,
+  };
+}
+
+// ── Fotos ────────────────────────────────────────────────────────────
+const fotoUrlCache = new Map();
+async function fotoUrl(id, art = "klein") {
+  const schluessel = `${id}|${art}`;
+  if (fotoUrlCache.has(schluessel)) return fotoUrlCache.get(schluessel);
+  const rec = await idb.get("fotos", id);
+  if (!rec) return null;
+  const url = URL.createObjectURL(rec[art] || rec.klein);
+  fotoUrlCache.set(schluessel, url);
+  return url;
+}
+function vergissFotoUrls(id) {
+  for (const art of ["klein", "voll"]) {
+    const k = `${id}|${art}`;
+    if (fotoUrlCache.has(k)) { URL.revokeObjectURL(fotoUrlCache.get(k)); fotoUrlCache.delete(k); }
+  }
+}
+async function loescheFoto(id) {
+  vergissFotoUrls(id);
+  try { await idb.del("fotos", id); } catch { /* egal */ }
+}
+function fotoImg(id, art = "klein") {
+  const img = document.createElement("img");
+  img.dataset.foto = id;
+  img.dataset.art = art;
+  img.alt = "";
+  img.loading = "lazy";
+  img.decoding = "async";
+  return img;
+}
+function ladeBilderIn(wurzel) {
+  return Promise.all([...wurzel.querySelectorAll("img[data-foto]:not([src])")].map(async img => {
+    const url = await fotoUrl(img.dataset.foto, img.dataset.art);
+    if (url) img.src = url;
+  }));
+}
+function ladeBild(datei) {
+  return new Promise((ok, fehler) => {
+    const url = URL.createObjectURL(datei);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); ok(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); fehler(new Error("Bild nicht lesbar")); };
+    img.src = url;
+  });
+}
+function verkleinere(img, max, qualitaet) {
+  const f = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * f), h = Math.round(img.naturalHeight * f);
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  c.getContext("2d").drawImage(img, 0, 0, w, h);
+  return new Promise(ok => c.toBlob(b => ok({ blob: b, w, h }), "image/jpeg", qualitaet));
+}
+async function speichereFoto(datei) {
+  const img = await ladeBild(datei);
+  const voll = await verkleinere(img, 1600, 0.82);
+  const klein = await verkleinere(img, 640, 0.78);
+  const id = neueId();
+  await idb.put("fotos", { id, voll: voll.blob, klein: klein.blob, w: voll.w, h: voll.h });
+  return id;
+}
+function blobZuDataUrl(blob) {
+  return new Promise((ok, fehler) => {
+    const r = new FileReader();
+    r.onload = () => ok(r.result);
+    r.onerror = () => fehler(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+// ── Rendern ──────────────────────────────────────────────────────────
+function renderAlles() {
+  const k = kennzahlen();
+  document.getElementById("kopfTitel").textContent = reiseTitel();
+  const r = daten.reise;
+  document.getElementById("kopfZeitraum").textContent = r.start && r.ende
+    ? `${datumLang(r.start)} – ${datumLang(r.ende)} · ${k.tage} Tage`
+    : (r.untertitel || "Titel und Reisedaten im Register Bericht festlegen");
+  document.title = daten.reise.titel ? `${daten.reise.titel} · Reisetagebuch` : "Reisetagebuch";
+
+  document.getElementById("sTage").textContent = k.tage || "–";
+  document.getElementById("sEintraege").textContent = k.eintraege;
+  document.getElementById("sFotos").textContent = k.fotos;
+  document.getElementById("sKm").textContent = formatZahlCH(k.kmRoute + k.kmTracks);
+  document.getElementById("rStationen").textContent = k.stationen;
+  document.getElementById("rKm").textContent = formatZahlCH(k.kmRoute);
+  document.getElementById("rTrackKm").textContent = formatZahlCH(k.kmTracks);
+
+  renderTagebuch();
+  renderTracks();
+  for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende]]) {
+    const el = document.getElementById(id);
+    if (document.activeElement !== el) el.value = wert || "";
+  }
+  if (aktivesRegister === "route") zeichneKarte();
+  if (aktivesRegister === "bericht" && berichtVeraltet) renderBericht();
+}
+
+// ── Tagebuch ─────────────────────────────────────────────────────────
+let auswahlModus = false;
+const ausgewaehlt = new Set();
+
+function renderTagebuch() {
+  const liste = document.getElementById("tagListe");
+  liste.innerHTML = "";
+  liste.classList.toggle("auswahl-modus", auswahlModus);
+  const tage = tageMitEintraegen().reverse();   // neueste zuerst
+  document.getElementById("tagListeLeer").hidden = tage.length > 0;
+  for (const d of [...ausgewaehlt]) if (!tage.includes(d)) ausgewaehlt.delete(d);
+
+  for (const datum of tage) {
+    const karte = document.createElement("article");
+    karte.className = "tag-karte" + (ausgewaehlt.has(datum) ? " ausgewaehlt" : "");
+    const kopf = document.createElement("div");
+    kopf.className = "tag-kopf";
+    const nr = document.createElement("span");
+    const n = tagNummer(datum);
+    nr.className = "tag-nr" + (n ? "" : " vorab");
+    nr.textContent = n ? `Tag ${n}` : "Vorab";
+    const dat = document.createElement("span");
+    dat.className = "tag-datum";
+    dat.textContent = datumLang(datum);
+    const check = document.createElement("span");
+    check.className = "tag-check";
+    check.textContent = "✓";
+    kopf.append(nr, dat, check);
+    karte.appendChild(kopf);
+
+    for (const e of eintraegeAm(datum)) {
+      const block = document.createElement("div");
+      block.className = "eintrag";
+      const ek = document.createElement("div");
+      ek.className = "eintrag-kopf";
+      const h3 = document.createElement("h3");
+      h3.textContent = e.titel || (e.ort ? e.ort : "Ohne Titel");
+      const bearbeiten = document.createElement("button");
+      bearbeiten.type = "button";
+      bearbeiten.className = "btn-klein";
+      bearbeiten.textContent = "✎";
+      bearbeiten.title = "Bearbeiten";
+      bearbeiten.addEventListener("click", ev => { ev.stopPropagation(); if (!auswahlModus) bearbeiteEintrag(e.id); });
+      ek.append(h3, bearbeiten);
+      block.appendChild(ek);
+      if (e.ort && e.titel) {
+        const ort = document.createElement("p");
+        ort.className = "eintrag-ort";
+        ort.textContent = `📍 ${e.ort}`;
+        block.appendChild(ort);
+      }
+      if (e.text) {
+        const p = document.createElement("p");
+        p.className = "eintrag-text";
+        p.textContent = e.text;
+        block.appendChild(p);
+        if (e.text.length > 260 || e.text.split("\n").length > 5) {
+          const mehr = document.createElement("button");
+          mehr.type = "button";
+          mehr.className = "mehr-link";
+          mehr.textContent = "weiterlesen";
+          mehr.addEventListener("click", ev => {
+            ev.stopPropagation();
+            const offen = p.classList.toggle("offen");
+            mehr.textContent = offen ? "weniger" : "weiterlesen";
+          });
+          block.appendChild(mehr);
+        }
+      }
+      if (e.fotos.length) {
+        const streifen = document.createElement("div");
+        streifen.className = "foto-streifen";
+        e.fotos.forEach((id, i) => {
+          const img = fotoImg(id);
+          img.addEventListener("click", ev => { if (auswahlModus) return; ev.stopPropagation(); oeffneLightbox(e.fotos, i); });
+          streifen.appendChild(img);
+        });
+        block.appendChild(streifen);
+      }
+      karte.appendChild(block);
+    }
+    karte.addEventListener("click", () => {
+      if (!auswahlModus) return;
+      ausgewaehlt.has(datum) ? ausgewaehlt.delete(datum) : ausgewaehlt.add(datum);
+      karte.classList.toggle("ausgewaehlt", ausgewaehlt.has(datum));
+      renderTeilenLeiste();
+    });
+    liste.appendChild(karte);
+  }
+  ladeBilderIn(liste);
+  renderTeilenLeiste();
+}
+
+function renderTeilenLeiste() {
+  const leiste = document.getElementById("teilenLeiste");
+  leiste.hidden = !(auswahlModus && aktivesRegister === "tagebuch");
+  const n = ausgewaehlt.size;
+  document.getElementById("teilenAnzahl").textContent = n === 0
+    ? "Tage zum Teilen antippen" : `${n} Tag${n === 1 ? "" : "e"} ausgewählt`;
+  document.getElementById("teilenStart").disabled = n === 0;
+  document.getElementById("auswahlBtn").classList.toggle("aktiv", auswahlModus);
+}
+function setzeAuswahlModus(an) {
+  auswahlModus = an;
+  if (!an) ausgewaehlt.clear();
+  renderTagebuch();
+}
+document.getElementById("auswahlBtn").addEventListener("click", () => setzeAuswahlModus(!auswahlModus));
+document.getElementById("teilenFertig").addEventListener("click", () => setzeAuswahlModus(false));
+document.getElementById("teilenStart").addEventListener("click", () => {
+  oeffneDialogTage([...ausgewaehlt].sort());
+});
+document.getElementById("neuerEintragBtn").addEventListener("click", async () => {
+  await formularVerwerfen();
+  formularLeeren();
+  zeigeRegister("eintrag");
+});
+
+// ── Eintrag-Formular ─────────────────────────────────────────────────
+const form = { id: null, fotos: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null };
+const feld = id => document.getElementById(id);
+
+function formularLeeren() {
+  form.id = null;
+  form.fotos = [];
+  form.neu = new Set();
+  form.entfernt = new Set();
+  form.lat = null;
+  form.lon = null;
+  feld("eDatum").value = heuteISO();
+  feld("eTitel").value = "";
+  feld("eOrt").value = "";
+  feld("eText").value = "";
+  feld("eintragKopf").textContent = "Neuer Eintrag";
+  feld("eintragLoeschen").hidden = true;
+  feld("eintragMeldung").hidden = true;
+  feld("ortTreffer").innerHTML = "";
+  renderOrtInfo();
+  renderFormFotos();
+}
+function bearbeiteEintrag(id) {
+  const e = daten.eintraege.find(x => x.id === id);
+  if (!e) return;
+  formularVerwerfen().then(() => {
+    form.id = e.id;
+    form.fotos = [...e.fotos];
+    form.neu = new Set();
+    form.entfernt = new Set();
+    form.lat = Number.isFinite(e.lat) ? e.lat : null;
+    form.lon = Number.isFinite(e.lon) ? e.lon : null;
+    feld("eDatum").value = e.datum;
+    feld("eTitel").value = e.titel || "";
+    feld("eOrt").value = e.ort || "";
+    feld("eText").value = e.text || "";
+    feld("eintragKopf").textContent = `Eintrag bearbeiten · ${datumLang(e.datum)}`;
+    feld("eintragLoeschen").hidden = false;
+    feld("eintragMeldung").hidden = true;
+    feld("ortTreffer").innerHTML = "";
+    renderOrtInfo();
+    renderFormFotos();
+    zeigeRegister("eintrag");
+  });
+}
+// Ungespeicherte, neu hinzugefügte Fotos wieder entfernen
+async function formularVerwerfen() {
+  for (const id of form.neu) await loescheFoto(id);
+  form.neu = new Set();
+}
+
+function renderFormFotos() {
+  const raster = feld("formFotos");
+  raster.innerHTML = "";
+  form.fotos.forEach((id, i) => {
+    const kachel = document.createElement("div");
+    kachel.className = "foto-kachel";
+    const img = fotoImg(id);
+    img.addEventListener("click", () => oeffneLightbox(form.fotos, i));
+    const weg = document.createElement("button");
+    weg.type = "button";
+    weg.className = "weg";
+    weg.textContent = "✕";
+    weg.setAttribute("aria-label", "Foto entfernen");
+    weg.addEventListener("click", async () => {
+      form.fotos = form.fotos.filter(x => x !== id);
+      if (form.neu.has(id)) { form.neu.delete(id); await loescheFoto(id); }
+      else form.entfernt.add(id);
+      renderFormFotos();
+    });
+    kachel.append(img, weg);
+    raster.appendChild(kachel);
+  });
+  const hinzu = document.createElement("label");
+  hinzu.className = "foto-hinzu";
+  hinzu.htmlFor = "fotoInput";
+  hinzu.innerHTML = "<span>＋</span>Fotos";
+  raster.appendChild(hinzu);
+  ladeBilderIn(raster);
+}
+
+feld("fotoInput").addEventListener("change", async (ev) => {
+  const dateien = [...ev.target.files];
+  ev.target.value = "";
+  const meldung = feld("eintragMeldung");
+  for (let i = 0; i < dateien.length; i++) {
+    meldung.hidden = false;
+    meldung.className = "formular-meldung ok";
+    meldung.textContent = `Foto ${i + 1} von ${dateien.length} wird verkleinert …`;
+    try {
+      const id = await speichereFoto(dateien[i]);
+      form.fotos.push(id);
+      form.neu.add(id);
+      renderFormFotos();
+    } catch (fehler) {
+      meldung.className = "formular-meldung";
+      meldung.textContent = `Ein Foto konnte nicht gelesen werden (${dateien[i].name}).`;
+      console.error(fehler);
+      return;
+    }
+  }
+  meldung.hidden = true;
+  meldung.className = "formular-meldung";
+});
+
+function renderOrtInfo() {
+  const info = feld("ortInfo");
+  info.innerHTML = "";
+  if (Number.isFinite(form.lat)) {
+    info.append(`📌 Auf der Karte: ${form.lat.toFixed(4)}, ${form.lon.toFixed(4)}`);
+    const weg = document.createElement("button");
+    weg.type = "button";
+    weg.className = "link";
+    weg.textContent = "entfernen";
+    weg.addEventListener("click", () => { form.lat = null; form.lon = null; renderOrtInfo(); });
+    info.appendChild(weg);
+  } else {
+    info.textContent = "Noch kein Kartenpunkt. 📍 übernimmt den Standort, 🔍 sucht den Ort.";
+  }
+}
+function setzeOrtMeldung(text) {
+  const info = feld("ortInfo");
+  info.textContent = text;
+}
+
+// Standort (GPS) mit Ortsname über OpenStreetMap (Nominatim)
+async function ortsnameVon(lat, lon) {
+  try {
+    const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&accept-language=de&lat=${lat}&lon=${lon}`);
+    if (!a.ok) return "";
+    const j = await a.json();
+    const ad = j.address || {};
+    return ad.city || ad.town || ad.village || ad.hamlet || ad.suburb || ad.municipality || ad.county || j.name || "";
+  } catch { return ""; }
+}
+feld("ortGps").addEventListener("click", () => {
+  if (!navigator.geolocation) { setzeOrtMeldung("Dieses Gerät gibt keinen Standort frei."); return; }
+  setzeOrtMeldung("Standort wird ermittelt …");
+  navigator.geolocation.getCurrentPosition(async pos => {
+    form.lat = Number(pos.coords.latitude.toFixed(5));
+    form.lon = Number(pos.coords.longitude.toFixed(5));
+    renderOrtInfo();
+    if (!feld("eOrt").value.trim()) {
+      const name = await ortsnameVon(form.lat, form.lon);
+      if (name && !feld("eOrt").value.trim()) feld("eOrt").value = name;
+    }
+  }, () => {
+    setzeOrtMeldung("Kein Standort verfügbar. Ortungsdienste für Safari erlauben oder den Ort mit 🔍 suchen.");
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+});
+
+async function sucheOrt() {
+  const q = feld("eOrt").value.trim();
+  const treffer = feld("ortTreffer");
+  treffer.innerHTML = "";
+  if (!q) { setzeOrtMeldung("Zuerst einen Ort eingeben, z.B. Kyoto."); return; }
+  setzeOrtMeldung("Suche …");
+  try {
+    const a = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=de&q=${encodeURIComponent(q)}`);
+    if (!a.ok) throw new Error(`HTTP ${a.status}`);
+    const liste = await a.json();
+    if (!liste.length) { setzeOrtMeldung(`„${q}“ nicht gefunden. Anders schreiben oder 📍 nutzen.`); return; }
+    renderOrtInfo();
+    for (const t of liste) {
+      const teile = t.display_name.split(",").map(s => s.trim());
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = teile[0];
+      const klein = document.createElement("small");
+      klein.textContent = teile.slice(1).join(", ");
+      b.appendChild(klein);
+      b.addEventListener("click", () => {
+        form.lat = Number(Number(t.lat).toFixed(5));
+        form.lon = Number(Number(t.lon).toFixed(5));
+        treffer.innerHTML = "";
+        renderOrtInfo();
+      });
+      treffer.appendChild(b);
+    }
+  } catch {
+    setzeOrtMeldung("Suche nicht möglich (offline?). Später nochmals versuchen.");
+  }
+}
+feld("ortSuchen").addEventListener("click", sucheOrt);
+feld("eOrt").addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); sucheOrt(); } });
+
+feld("eintragFormular").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const meldung = feld("eintragMeldung");
+  const datum = feld("eDatum").value;
+  const titel = feld("eTitel").value.trim();
+  const ort = feld("eOrt").value.trim();
+  const text = feld("eText").value.replace(/\s+$/, "");
+  meldung.className = "formular-meldung";
+  if (!datum) { meldung.textContent = "Bitte ein Datum wählen."; meldung.hidden = false; return; }
+  if (!titel && !text && !form.fotos.length) {
+    meldung.textContent = "Bitte einen Titel, Text oder ein Foto erfassen.";
+    meldung.hidden = false;
+    return;
+  }
+  const bisher = daten.eintraege.find(x => x.id === form.id);
+  const eintrag = {
+    id: form.id || neueId(), datum, titel, ort, text,
+    lat: form.lat, lon: form.lon, fotos: [...form.fotos],
+    erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
+  };
+  if (bisher) Object.assign(bisher, eintrag); else daten.eintraege.push(eintrag);
+  for (const id of form.entfernt) await loescheFoto(id);
+  form.neu = new Set();
+  form.entfernt = new Set();
+  await speichere();
+  formularLeeren();
+  zeigeRegister("tagebuch");
+});
+feld("eintragAbbrechen").addEventListener("click", async () => {
+  await formularVerwerfen();
+  formularLeeren();
+  zeigeRegister("tagebuch");
+});
+zweistufig(feld("eintragLoeschen"), "Wirklich löschen? Nochmals tippen", async () => {
+  const e = daten.eintraege.find(x => x.id === form.id);
+  if (e) {
+    for (const id of new Set([...e.fotos, ...form.fotos])) await loescheFoto(id);
+    daten.eintraege = daten.eintraege.filter(x => x.id !== e.id);
+  }
+  await formularVerwerfen();
+  await speichere();
+  formularLeeren();
+  zeigeRegister("tagebuch");
+});
+
+// Zweistufige Bestätigung direkt am Knopf (keine confirm()-Dialoge)
+function zweistufig(btn, frage, aktion) {
+  const original = btn.textContent;
+  let timer = null;
+  btn.addEventListener("click", () => {
+    if (btn.classList.contains("bestaetigen")) {
+      clearTimeout(timer);
+      btn.classList.remove("bestaetigen");
+      btn.textContent = original;
+      aktion();
+      return;
+    }
+    btn.classList.add("bestaetigen");
+    btn.textContent = frage;
+    timer = setTimeout(() => { btn.classList.remove("bestaetigen"); btn.textContent = original; }, 4000);
+  });
+}
+
+// ── Route: Karte + GPX ───────────────────────────────────────────────
+let karte = null, karteEbene = null;
+
+function initKarte() {
+  if (karte) return true;
+  if (!window.L) {
+    document.getElementById("karte").innerHTML = '<p class="leer">Die Karte braucht beim ersten Öffnen eine Internetverbindung.</p>';
+    return false;
+  }
+  karte = L.map("karte", { zoomControl: true });
+  L.tileLayer(KACHELN_DUNKEL, { subdomains: "abcd", maxZoom: 19, attribution: KARTEN_QUELLE }).addTo(karte);
+  karteEbene = L.layerGroup().addTo(karte);
+  return true;
+}
+function zeichneKarte() {
+  if (!initKarte()) return;
+  karte.invalidateSize();
+  karteEbene.clearLayers();
+  const grenzen = [];
+  for (const t of daten.tracks) {
+    L.polyline(t.punkte, { color: "#5aa9bb", weight: 3, opacity: 0.9 }).bindPopup(t.name).addTo(karteEbene);
+    t.punkte.forEach(p => grenzen.push(p));
+  }
+  const st = stationen();
+  if (st.length > 1) {
+    L.polyline(st.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.9 }).addTo(karteEbene);
+  }
+  st.forEach((e, i) => {
+    const icon = L.divIcon({ className: "", html: `<div class="karte-marker">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+    const inhalt = document.createElement("div");
+    const b = document.createElement("strong");
+    b.textContent = `${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
+    inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
+    L.marker([e.lat, e.lon], { icon }).bindPopup(inhalt).addTo(karteEbene);
+    grenzen.push([e.lat, e.lon]);
+  });
+  if (grenzen.length > 1) karte.fitBounds(grenzen, { padding: [30, 30], maxZoom: 13 });
+  else if (grenzen.length === 1) karte.setView(grenzen[0], 11);
+  else karte.setView([46.8, 8.2], 7);
+}
+
+function renderTracks() {
+  const liste = document.getElementById("trackListe");
+  liste.innerHTML = "";
+  if (!daten.tracks.length) {
+    liste.innerHTML = '<p class="hinweis">Noch keine Tracks. Eine GPX-Datei (z.B. aus Komoot, Strava oder der Uhr) zeigt die gefahrene oder gewanderte Strecke.</p>';
+    return;
+  }
+  for (const t of daten.tracks) {
+    const z = document.createElement("div");
+    z.className = "listen-zeile";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = t.name;
+    const zusatz = document.createElement("span");
+    zusatz.className = "zusatz";
+    zusatz.textContent = `${formatZahlCH(t.km || 0, 1)} km`;
+    const weg = document.createElement("button");
+    weg.type = "button";
+    weg.className = "btn-loeschen";
+    weg.textContent = "✕";
+    let timer;
+    weg.addEventListener("click", () => {
+      if (weg.classList.contains("bestaetigen")) {
+        daten.tracks = daten.tracks.filter(x => x.id !== t.id);
+        speichere();
+        return;
+      }
+      weg.classList.add("bestaetigen");
+      weg.textContent = "Löschen?";
+      clearTimeout(timer);
+      timer = setTimeout(() => { weg.classList.remove("bestaetigen"); weg.textContent = "✕"; }, 3500);
+    });
+    z.append(name, zusatz, weg);
+    liste.appendChild(z);
+  }
+}
+
+document.getElementById("gpxInput").addEventListener("change", async (ev) => {
+  const datei = ev.target.files[0];
+  ev.target.value = "";
+  const meldung = document.getElementById("gpxMeldung");
+  meldung.hidden = false;
+  meldung.className = "formular-meldung";
+  if (!datei) return;
+  try {
+    const xml = new DOMParser().parseFromString(await datei.text(), "application/xml");
+    let punkte = [...xml.querySelectorAll("trkpt, rtept")]
+      .map(n => [Number(n.getAttribute("lat")), Number(n.getAttribute("lon"))])
+      .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    if (punkte.length < 2) { meldung.textContent = "In dieser Datei wurde kein Track gefunden."; return; }
+    const laenge = streckeKm(punkte);
+    // Auf höchstens 1500 Punkte ausdünnen, damit der Speicher klein bleibt
+    const schritt = Math.ceil(punkte.length / 1500);
+    if (schritt > 1) punkte = punkte.filter((_, i) => i % schritt === 0 || i === punkte.length - 1);
+    punkte = punkte.map(p => [Number(p[0].toFixed(5)), Number(p[1].toFixed(5))]);
+    const nameEl = xml.querySelector("trk > name, rte > name, metadata > name");
+    const name = (nameEl && nameEl.textContent.trim()) || datei.name.replace(/\.gpx$/i, "");
+    daten.tracks.push({ id: neueId(), name, punkte, km: Number(laenge.toFixed(2)) });
+    meldung.className = "formular-meldung ok";
+    meldung.textContent = `Track „${name}“ geladen (${formatZahlCH(laenge, 1)} km).`;
+    await speichere();
+  } catch (fehler) {
+    meldung.textContent = "Die Datei konnte nicht gelesen werden. Ist es eine GPX-Datei?";
+    console.error(fehler);
+  }
+});
+
+// ── Statische Karte für Bericht und PDF ──────────────────────────────
+// Setzt helle Kartenkacheln auf ein Canvas und zeichnet Route + Stationen
+// darüber. Ergebnis ist ein JPEG, das im Druck und im PDF gleich aussieht.
+let karteCache = { schluessel: "", bild: null };
+
+function ladeKachel(url) {
+  return new Promise(ok => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    const timer = setTimeout(() => ok(null), 8000);
+    img.onload = () => { clearTimeout(timer); ok(img); };
+    img.onerror = () => { clearTimeout(timer); ok(null); };
+    img.src = url;
+  });
+}
+async function statischeKarte() {
+  const st = stationen();
+  const alle = [...st.map(e => [e.lat, e.lon]), ...daten.tracks.flatMap(t => t.punkte)];
+  if (!alle.length) return null;
+  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon]), daten.tracks.map(t => t.id)]);
+  if (karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
+
+  const B = 1400, H = 900, RAND = 70;
+  const px = (lat, lon, z) => {
+    const s = Math.sin(lat * Math.PI / 180);
+    const n = 256 * 2 ** z;
+    return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
+  };
+  let z = 14;
+  for (; z > 1; z--) {
+    const p = alle.map(([la, lo]) => px(la, lo, z));
+    const bx = Math.max(...p.map(q => q[0])) - Math.min(...p.map(q => q[0]));
+    const by = Math.max(...p.map(q => q[1])) - Math.min(...p.map(q => q[1]));
+    if (bx <= B - 2 * RAND && by <= H - 2 * RAND) break;
+  }
+  if (alle.length === 1 || st.length === 1 && !daten.tracks.length) z = Math.min(z, 11);
+  const p = alle.map(([la, lo]) => px(la, lo, z));
+  const mx = (Math.max(...p.map(q => q[0])) + Math.min(...p.map(q => q[0]))) / 2;
+  const my = (Math.max(...p.map(q => q[1])) + Math.min(...p.map(q => q[1]))) / 2;
+  const ox = mx - B / 2, oy = my - H / 2;
+
+  const zeichne = async (mitKacheln) => {
+    const c = document.createElement("canvas");
+    c.width = B; c.height = H;
+    const g = c.getContext("2d");
+    g.fillStyle = "#ece8df";
+    g.fillRect(0, 0, B, H);
+    if (mitKacheln) {
+      const n = 2 ** z, auftraege = [];
+      for (let tx = Math.floor(ox / 256); tx <= Math.floor((ox + B) / 256); tx++) {
+        for (let ty = Math.floor(oy / 256); ty <= Math.floor((oy + H) / 256); ty++) {
+          if (ty < 0 || ty >= n) continue;
+          const wx = ((tx % n) + n) % n;
+          auftraege.push(ladeKachel(KACHELN_HELL(z, wx, ty)).then(img => { if (img) g.drawImage(img, tx * 256 - ox, ty * 256 - oy); }));
+        }
+      }
+      await Promise.all(auftraege);
+    }
+    const auf = ([la, lo]) => { const q = px(la, lo, z); return [q[0] - ox, q[1] - oy]; };
+    g.lineJoin = "round"; g.lineCap = "round";
+    for (const t of daten.tracks) {
+      g.strokeStyle = "#2f8aa0"; g.lineWidth = 5; g.beginPath();
+      t.punkte.forEach((q, i) => { const [x, y] = auf(q); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.stroke();
+    }
+    if (st.length > 1) {
+      g.strokeStyle = "#b57d1e"; g.lineWidth = 4; g.setLineDash([12, 12]); g.beginPath();
+      st.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.stroke(); g.setLineDash([]);
+    }
+    st.forEach((e, i) => {
+      const [x, y] = auf([e.lat, e.lon]);
+      g.beginPath(); g.arc(x, y, 17, 0, Math.PI * 2);
+      g.fillStyle = "#d4a24e"; g.fill();
+      g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
+      g.fillStyle = "#1a1d22"; g.font = "bold 17px -apple-system, Segoe UI, Roboto, sans-serif";
+      g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(String(i + 1), x, y + 1);
+    });
+    return c.toDataURL("image/jpeg", 0.86);
+  };
+  let url;
+  try { url = await zeichne(true); }
+  catch { url = await zeichne(false); }   // Kacheln nicht freigegeben -> ohne Hintergrund
+  karteCache = { schluessel, bild: { url, w: B, h: H } };
+  return karteCache.bild;
+}
+
+// ── Bericht (Vorschau = Druck) ───────────────────────────────────────
+let berichtVeraltet = true;
+let berichtLauf = 0;
+
+async function renderBericht() {
+  berichtVeraltet = false;
+  const lauf = ++berichtLauf;
+  const ziel = document.getElementById("berichtDruck");
+  ziel.innerHTML = "";
+  const k = kennzahlen();
+  const r = daten.reise;
+
+  const deck = document.createElement("section");
+  deck.className = "seite deckblatt";
+  const h = document.createElement("h2");
+  h.textContent = reiseTitel();
+  deck.appendChild(h);
+  if (r.untertitel) {
+    const u = document.createElement("p");
+    u.className = "unter";
+    u.textContent = r.untertitel;
+    deck.appendChild(u);
+  }
+  const fakten = document.createElement("div");
+  fakten.className = "fakten";
+  const fakt = (wert, text) => {
+    const s = document.createElement("span");
+    const st = document.createElement("strong");
+    st.textContent = wert;
+    s.append(st, ` ${text}`);
+    fakten.appendChild(s);
+  };
+  if (r.start && r.ende) {
+    const s = document.createElement("span");
+    s.textContent = `${datumLang(r.start)} – ${datumLang(r.ende)}`;
+    fakten.appendChild(s);
+  }
+  fakt(k.tage, "Tage");
+  fakt(k.stationen, "Stationen");
+  fakt(k.fotos, "Fotos");
+  if (k.kmRoute + k.kmTracks > 0) fakt(formatZahlCH(k.kmRoute + k.kmTracks), "km");
+  deck.appendChild(fakten);
+  const fig = document.createElement("figure");
+  const platzhalter = document.createElement("div");
+  platzhalter.className = "karte-platzhalter";
+  platzhalter.textContent = k.stationen || daten.tracks.length ? "Karte wird erstellt …" : "Noch keine Stationen mit Kartenpunkt.";
+  fig.appendChild(platzhalter);
+  deck.appendChild(fig);
+  ziel.appendChild(deck);
+
+  for (const datum of tageMitEintraegen()) {
+    const seite = document.createElement("section");
+    seite.className = "seite";
+    const kopf = document.createElement("p");
+    kopf.className = "seite-kopf";
+    kopf.textContent = `${tagLabel(datum)} · ${datumLang(datum)}`;
+    seite.appendChild(kopf);
+    for (const e of eintraegeAm(datum)) {
+      const block = document.createElement("div");
+      block.className = "eintrag-druck";
+      if (e.titel) { const h3 = document.createElement("h3"); h3.textContent = e.titel; block.appendChild(h3); }
+      if (e.ort) { const o = document.createElement("p"); o.className = "ort"; o.textContent = e.ort; block.appendChild(o); }
+      if (e.text) { const t = document.createElement("p"); t.className = "text"; t.textContent = e.text; block.appendChild(t); }
+      if (e.fotos.length) {
+        const f = document.createElement("div");
+        f.className = "fotos";
+        e.fotos.forEach(id => { const img = fotoImg(id); img.loading = "eager"; f.appendChild(img); });
+        block.appendChild(f);
+      }
+      seite.appendChild(block);
+    }
+    ziel.appendChild(seite);
+  }
+  ladeBilderIn(ziel);
+
+  if (k.stationen || daten.tracks.length) {
+    const bild = await statischeKarte();
+    if (lauf !== berichtLauf || !bild) return;
+    const img = document.createElement("img");
+    img.src = bild.url;
+    img.alt = "Karte der Reiseroute";
+    const cap = document.createElement("figcaption");
+    cap.textContent = `Route mit ${k.stationen} Station${k.stationen === 1 ? "" : "en"} · Karte ${KARTEN_QUELLE}`;
+    fig.replaceChildren(img, cap);
+  }
+}
+
+document.getElementById("druckBtn").addEventListener("click", async () => {
+  if (berichtVeraltet) await renderBericht();
+  const bilder = [...document.querySelectorAll("#berichtDruck img")];
+  await ladeBilderIn(document.getElementById("berichtDruck"));
+  await Promise.all(bilder.map(img => (img.decode ? img.decode().catch(() => {}) : null)));
+  window.print();
+});
+
+for (const [id, schluessel] of [["rTitel", "titel"], ["rUntertitel", "untertitel"], ["rStart", "start"], ["rEnde", "ende"]]) {
+  document.getElementById(id).addEventListener("change", (ev) => {
+    daten.reise[schluessel] = ev.target.value.trim();
+    speichere();
+  });
+}
+
+// ── PDF (jsPDF, erst bei Bedarf geladen) ─────────────────────────────
+function ladeJsPdf() {
+  if (window.jspdf) return Promise.resolve();
+  return new Promise((ok, fehler) => {
+    const s = document.createElement("script");
+    s.src = PDF_LIB;
+    s.onload = () => ok();
+    s.onerror = () => fehler(new Error("Die PDF-Funktion braucht beim ersten Mal eine Internetverbindung."));
+    document.head.appendChild(s);
+  });
+}
+// Die Standardschriften im PDF kennen keine Emojis -> herausfiltern
+const pdfText = t => (t || "")
+  .replace(/[‘’‚]/g, "'").replace(/[“”„]/g, '"')
+  .replace(/[^\n\x20-\x7E\xA0-\xFF–—…€•]/g, "")
+  .replace(/[ \t]+\n/g, "\n").trim();
+
+async function erstellePdf(tage, mitDeckblatt, fortschritt) {
+  await ladeJsPdf();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+  const W = 210, H = 297, R = 16, B = W - 2 * R, UNTEN = H - 20;
+  let y = R;
+  let leer = true;
+  const neueSeite = () => { doc.addPage(); y = R; };
+  const platz = h => { if (y + h > UNTEN) neueSeite(); };
+  const farbe = (rgb) => doc.setTextColor(...rgb);
+  const TINTE = [35, 38, 44], GRAU = [122, 116, 102];
+
+  if (mitDeckblatt) {
+    const k = kennzahlen();
+    doc.setFont("helvetica", "bold"); doc.setFontSize(28); farbe(TINTE);
+    const zeilen = doc.splitTextToSize(pdfText(reiseTitel()), B);
+    doc.text(zeilen, R, y + 12);
+    y += 12 + zeilen.length * 11;
+    if (daten.reise.untertitel) {
+      doc.setFont("times", "italic"); doc.setFontSize(15); farbe(GRAU);
+      const u = doc.splitTextToSize(pdfText(daten.reise.untertitel), B);
+      doc.text(u, R, y + 2);
+      y += u.length * 7 + 2;
+    }
+    const fakten = [];
+    if (daten.reise.start && daten.reise.ende) fakten.push(`${datumLang(daten.reise.start)} – ${datumLang(daten.reise.ende)}`);
+    fakten.push(`${k.tage} Tage`, `${k.stationen} Stationen`, `${k.fotos} Fotos`);
+    if (k.kmRoute + k.kmTracks > 0) fakten.push(`${formatZahlCH(k.kmRoute + k.kmTracks)} km`);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10); farbe(GRAU);
+    doc.text(pdfText(fakten.join("   ·   ")), R, y + 6);
+    y += 14;
+    fortschritt && fortschritt("Karte wird erstellt …");
+    const bild = await statischeKarte();
+    if (bild) {
+      const h = B * bild.h / bild.w;
+      doc.addImage(bild.url, "JPEG", R, y, B, h);
+      y += h + 4;
+      doc.setFontSize(7.5);
+      doc.text(pdfText(`Karte ${KARTEN_QUELLE}`), R, y + 2);
+    }
+    leer = false;
+  }
+
+  for (let ti = 0; ti < tage.length; ti++) {
+    const datum = tage[ti];
+    fortschritt && fortschritt(`Tag ${ti + 1} von ${tage.length} …`);
+    if (!leer) neueSeite();
+    leer = false;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); farbe(GRAU);
+    doc.setCharSpace(0.4);
+    doc.text(pdfText(`${tagLabel(datum)}  ·  ${datumLang(datum)}`.toUpperCase()), R, y + 3);
+    doc.setCharSpace(0);
+    y += 8;
+
+    const eintraege = eintraegeAm(datum);
+    for (let ei = 0; ei < eintraege.length; ei++) {
+      const e = eintraege[ei];
+      if (ei > 0) {
+        platz(12);
+        doc.setDrawColor(227, 222, 211); doc.setLineWidth(0.3);
+        doc.line(R, y + 3, R + B, y + 3);
+        y += 8;
+      }
+      if (e.titel) {
+        doc.setFont("helvetica", "bold"); doc.setFontSize(17); farbe(TINTE);
+        const z = doc.splitTextToSize(pdfText(e.titel), B);
+        platz(z.length * 7.2 + 2);
+        doc.text(z, R, y + 6);
+        y += z.length * 7.2 + 1;
+      }
+      if (e.ort) {
+        doc.setFont("helvetica", "normal"); doc.setFontSize(10); farbe(GRAU);
+        platz(6);
+        doc.text(pdfText(e.ort), R, y + 4);
+        y += 6;
+      }
+      if (e.text) {
+        doc.setFont("times", "normal"); doc.setFontSize(11.5); farbe(TINTE);
+        y += 2;
+        for (const absatz of pdfText(e.text).split("\n")) {
+          const zeilen = absatz ? doc.splitTextToSize(absatz, B) : [""];
+          for (const zeile of zeilen) {
+            platz(5.3);
+            doc.text(zeile, R, y + 4.3);
+            y += 5.3;
+          }
+        }
+      }
+      // Fotos: je zwei nebeneinander, ein einzelnes zentriert
+      const recs = (await Promise.all(e.fotos.map(id => idb.get("fotos", id)))).filter(Boolean);
+      if (recs.length) y += 4;
+      for (let i = 0; i < recs.length; i += 2) {
+        const reihe = recs.slice(i, i + 2);
+        const urls = await Promise.all(reihe.map(r => blobZuDataUrl(r.klein)));
+        if (reihe.length === 2) {
+          const sw = (B - 5) / 2;
+          const masse = reihe.map(r => {
+            let h = sw * r.h / r.w, w = sw;
+            if (h > 78) { h = 78; w = h * r.w / r.h; }
+            return { w, h };
+          });
+          const hmax = Math.max(...masse.map(m => m.h));
+          platz(hmax + 4);
+          masse.forEach((m, j) => doc.addImage(urls[j], "JPEG", R + j * (sw + 5) + (sw - m.w) / 2, y, m.w, m.h));
+          y += hmax + 5;
+        } else {
+          const r = reihe[0];
+          let w = Math.min(130, B), h = w * r.h / r.w;
+          if (h > 105) { h = 105; w = h * r.w / r.h; }
+          platz(h + 4);
+          doc.addImage(urls[0], "JPEG", R + (B - w) / 2, y, w, h);
+          y += h + 5;
+        }
+      }
+      y += 3;
+    }
+  }
+
+  // Fusszeile mit Seitenzahl
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); farbe(GRAU);
+    doc.text(pdfText(reiseTitel()), R, H - 10);
+    doc.text(`${i} / ${n}`, W - R, H - 10, { align: "right" });
+  }
+  return doc.output("blob");
+}
+
+// ── Dialog: Teilen (WhatsApp), PDF, Sicherung ────────────────────────
+// iOS erlaubt das Teilen-Menü nur direkt nach einem Tippen. Darum wird
+// zuerst alles vorbereitet und erst ein zweiter Knopf öffnet WhatsApp.
+const dialogEl = document.getElementById("dialog");
+function schliesseDialog() { dialogEl.hidden = true; }
+dialogEl.addEventListener("click", ev => { if (ev.target === dialogEl) schliesseDialog(); });
+
+function dialogKnopf(text, klasse, aktion) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = klasse;
+  b.textContent = text;
+  b.addEventListener("click", aktion);
+  document.getElementById("dialogKnoepfe").appendChild(b);
+  return b;
+}
+function dialogStatus(text) { document.getElementById("dialogStatus").textContent = text; }
+
+async function teileDatei(datei, titel) {
+  if (navigator.canShare && navigator.canShare({ files: [datei] })) {
+    try { await navigator.share({ files: [datei], title: titel }); return true; }
+    catch (e) { if (e.name === "AbortError") return false; }
+  }
+  // Rückfall (Computer): Datei herunterladen
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(datei);
+  a.download = datei.name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  return true;
+}
+
+function whatsappText(tage) {
+  const teile = [`📖 *${reiseTitel()}*`];
+  for (const datum of tage) {
+    teile.push("", `🗓 *${tagLabel(datum)} · ${datumLang(datum)}*`);
+    for (const e of eintraegeAm(datum)) {
+      if (e.ort) teile.push(`📍 ${e.ort}`);
+      if (e.titel) teile.push(`*${e.titel}*`);
+      if (e.text) teile.push(e.text);
+      teile.push("");
+    }
+  }
+  return teile.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
+  let pdfDatei = null;
+  const knopf = dialogKnopf("📄 PDF erstellen", "btn-abbrechen", async () => {
+    if (pdfDatei) {
+      const ok = await teileDatei(pdfDatei, reiseTitel());
+      if (ok) dialogStatus("PDF weitergegeben.");
+      return;
+    }
+    knopf.disabled = true;
+    try {
+      const blob = await erstellePdf(tage, mitDeckblatt, t => { knopf.textContent = `📄 ${t}`; });
+      pdfDatei = new File([blob], `${dateiBasis}.pdf`, { type: "application/pdf" });
+      knopf.textContent = `📄 PDF teilen / sichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
+      knopf.className = "btn-speichern";
+      dialogStatus("PDF ist bereit. Im nächsten Schritt WhatsApp, Dateien oder Drucken wählen.");
+    } catch (fehler) {
+      knopf.textContent = "📄 PDF erstellen";
+      dialogStatus(fehler.message || "Das PDF konnte nicht erstellt werden.");
+      console.error(fehler);
+    }
+    knopf.disabled = false;
+  });
+  return knopf;
+}
+
+async function oeffneDialogTage(tage) {
+  document.getElementById("dialogKnoepfe").innerHTML = "";
+  document.getElementById("dialogTitel").textContent = tage.length === 1
+    ? `${tagLabel(tage[0])} teilen` : `${tage.length} Tage teilen`;
+  dialogStatus("Fotos werden vorbereitet …");
+  dialogEl.hidden = false;
+
+  const text = whatsappText(tage);
+  const fotoIds = tage.flatMap(d => eintraegeAm(d).flatMap(e => e.fotos)).slice(0, 30);
+
+  const fotosKnopf = dialogKnopf("💬 Text + Fotos (WhatsApp)", "btn-speichern", async () => {
+    // Text zusätzlich in die Zwischenablage: WhatsApp übernimmt am iPhone
+    // bei Fotos den Begleittext nicht immer.
+    try { navigator.clipboard && navigator.clipboard.writeText(text); } catch { /* egal */ }
+    if (navigator.canShare && navigator.canShare({ files: dateien })) {
+      try {
+        await navigator.share({ files: dateien, text });
+        dialogStatus("Geteilt. Fehlt in WhatsApp der Text: lange ins Eingabefeld tippen und „Einsetzen“ wählen.");
+      } catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. „Nur Text“ oder PDF versuchen."); }
+    } else {
+      dialogStatus("Dieses Gerät kann keine Fotos teilen. „Nur Text“ oder PDF nutzen.");
+    }
+  });
+  fotosKnopf.disabled = true;
+  dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
+    if (navigator.share) {
+      try { await navigator.share({ text }); } catch { /* abgebrochen */ }
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    }
+  });
+  pdfKnopf(tage, false, `${dateiName(reiseTitel())}-${tage.length === 1 ? dateiName(tagLabel(tage[0])) : tage.length + "-tage"}`);
+  dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+
+  const dateien = [];
+  for (let i = 0; i < fotoIds.length; i++) {
+    const rec = await idb.get("fotos", fotoIds[i]);
+    if (rec) dateien.push(new File([rec.voll], `foto-${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+  }
+  if (!dateien.length) {
+    fotosKnopf.textContent = "💬 Keine Fotos an diesen Tagen";
+    dialogStatus("Text oder PDF teilen.");
+  } else {
+    fotosKnopf.disabled = false;
+    fotosKnopf.textContent = `💬 Text + ${dateien.length} Foto${dateien.length === 1 ? "" : "s"} (WhatsApp)`;
+    dialogStatus(fotoIds.length === 30 ? "Es werden die ersten 30 Fotos geteilt." : "Bereit zum Teilen.");
+  }
+}
+
+document.getElementById("pdfBtn").addEventListener("click", () => {
+  const tage = tageMitEintraegen();
+  document.getElementById("dialogKnoepfe").innerHTML = "";
+  document.getElementById("dialogTitel").textContent = "Reisebericht als PDF";
+  dialogStatus(`Deckblatt mit Routenkarte und ${tage.length} Tag${tage.length === 1 ? "" : "e"}, eine Seite je Tag.`);
+  dialogEl.hidden = false;
+  pdfKnopf(tage, true, `${dateiName(reiseTitel())}-bericht`);
+  dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+});
+
+// ── Datensicherung ───────────────────────────────────────────────────
+document.getElementById("sicherungBtn").addEventListener("click", async () => {
+  document.getElementById("dialogKnoepfe").innerHTML = "";
+  document.getElementById("dialogTitel").textContent = "Sicherung";
+  dialogStatus("Sicherung wird erstellt …");
+  dialogEl.hidden = false;
+  const knopf = dialogKnopf("💾 Sicherung speichern", "btn-speichern", () => {});
+  knopf.disabled = true;
+  dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+  try {
+    const fotos = [];
+    for (const rec of await idb.alle("fotos")) {
+      fotos.push({ id: rec.id, w: rec.w, h: rec.h, voll: await blobZuDataUrl(rec.voll), klein: await blobZuDataUrl(rec.klein) });
+    }
+    const blob = new Blob([JSON.stringify({ format: "reisetagebuch", version: 1, erstellt: new Date().toISOString(), daten, fotos })],
+      { type: "application/json" });
+    const datei = new File([blob], `${dateiName(reiseTitel())}-sicherung-${heuteISO()}.json`, { type: "application/json" });
+    knopf.disabled = false;
+    knopf.textContent = `💾 Sicherung speichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
+    knopf.onclick = async () => { if (await teileDatei(datei, "Sicherung Reisetagebuch")) dialogStatus("Gespeichert. Am besten in iCloud Drive ablegen."); };
+    dialogStatus("Bereit. Im Teilen-Menü „In Dateien sichern“ wählen.");
+  } catch (fehler) {
+    dialogStatus("Die Sicherung konnte nicht erstellt werden.");
+    console.error(fehler);
+  }
+});
+
+let geladeneSicherung = null;
+document.getElementById("sicherungInput").addEventListener("change", async (ev) => {
+  const datei = ev.target.files[0];
+  ev.target.value = "";
+  const meldung = document.getElementById("sicherungMeldung");
+  const ersetzen = document.getElementById("sicherungErsetzen");
+  meldung.hidden = false;
+  meldung.className = "formular-meldung";
+  ersetzen.hidden = true;
+  if (!datei) return;
+  try {
+    const inhalt = JSON.parse(await datei.text());
+    if (inhalt.format !== "reisetagebuch" || !inhalt.daten) throw new Error("falsches Format");
+    geladeneSicherung = inhalt;
+    const d = normalisiere(inhalt.daten);
+    meldung.textContent = `Sicherung „${d.reise.titel || "Reisetagebuch"}“ mit ${d.eintraege.length} Einträgen und ${(inhalt.fotos || []).length} Fotos. Sie ersetzt alles, was jetzt auf diesem Gerät ist.`;
+    meldung.className = "hinweis";
+    ersetzen.hidden = false;
+  } catch {
+    meldung.textContent = "Diese Datei ist keine Sicherung des Reisetagebuchs.";
+  }
+});
+zweistufig(document.getElementById("sicherungErsetzen"), "Wirklich alles ersetzen? Nochmals tippen", async () => {
+  if (!geladeneSicherung) return;
+  const meldung = document.getElementById("sicherungMeldung");
+  meldung.textContent = "Sicherung wird geladen …";
+  try {
+    for (const id of [...fotoUrlCache.keys()]) URL.revokeObjectURL(fotoUrlCache.get(id));
+    fotoUrlCache.clear();
+    await idb.leeren("fotos");
+    for (const f of geladeneSicherung.fotos || []) {
+      const voll = await (await fetch(f.voll)).blob();
+      const klein = await (await fetch(f.klein)).blob();
+      await idb.put("fotos", { id: f.id, w: f.w, h: f.h, voll, klein });
+    }
+    daten = normalisiere(geladeneSicherung.daten);
+    geladeneSicherung = null;
+    document.getElementById("sicherungErsetzen").hidden = true;
+    meldung.className = "formular-meldung ok";
+    meldung.textContent = "Sicherung geladen.";
+    karteCache = { schluessel: "", bild: null };
+    await speichere();
+  } catch (fehler) {
+    meldung.className = "formular-meldung";
+    meldung.textContent = "Laden fehlgeschlagen.";
+    console.error(fehler);
+  }
+});
+
+// ── Fotoansicht ──────────────────────────────────────────────────────
+let lbListe = [], lbIndex = 0;
+async function zeigeLbFoto() {
+  const img = document.getElementById("lbBild");
+  img.removeAttribute("src");
+  img.src = await fotoUrl(lbListe[lbIndex], "voll") || "";
+  document.getElementById("lbZurueck").hidden = lbListe.length < 2;
+  document.getElementById("lbVor").hidden = lbListe.length < 2;
+}
+function oeffneLightbox(liste, index) {
+  lbListe = liste; lbIndex = index;
+  document.getElementById("lightbox").hidden = false;
+  zeigeLbFoto();
+}
+document.getElementById("lbZu").addEventListener("click", () => { document.getElementById("lightbox").hidden = true; });
+document.getElementById("lbBild").addEventListener("click", () => { document.getElementById("lightbox").hidden = true; });
+document.getElementById("lbVor").addEventListener("click", () => { lbIndex = (lbIndex + 1) % lbListe.length; zeigeLbFoto(); });
+document.getElementById("lbZurueck").addEventListener("click", () => { lbIndex = (lbIndex - 1 + lbListe.length) % lbListe.length; zeigeLbFoto(); });
+document.addEventListener("keydown", ev => {
+  if (document.getElementById("lightbox").hidden) { if (ev.key === "Escape" && !dialogEl.hidden) schliesseDialog(); return; }
+  if (ev.key === "Escape") document.getElementById("lightbox").hidden = true;
+  if (ev.key === "ArrowRight") document.getElementById("lbVor").click();
+  if (ev.key === "ArrowLeft") document.getElementById("lbZurueck").click();
+});
+
+// ── Register + Tabbar-Einbuchtung (wie Tinu-Trading) ─────────────────
+let aktivesRegister = "tagebuch";
+function positioniereWelle() {
+  const btn = document.querySelector(".tab-btn.aktiv");
+  const bar = document.getElementById("tabBar");
+  if (!btn) return;
+  const b = btn.getBoundingClientRect(), r = bar.getBoundingClientRect();
+  const cx = b.left + b.width / 2 - r.left;
+  bar.style.setProperty("--tab-x", `${cx}px`);
+  const svg = document.getElementById("tabBarPlatte");
+  const pfad = document.getElementById("tabBarPfad");
+  const breite = r.width;
+  if (!breite) return;
+  svg.setAttribute("viewBox", `0 0 ${breite} 62`);
+  const rad = 42, schulter = 14, tiefe = rad * 0.6;
+  const la = Math.max(cx - rad - schulter, 0), li = cx - rad, ri = cx + rad, ra = Math.min(cx + rad + schulter, breite);
+  pfad.setAttribute("d", `M 0,0 L ${la},0 C ${la + schulter * 0.6},0 ${li},${tiefe * 0.6} ${li},${tiefe}
+    A ${rad},${rad} 0 0 0 ${ri},${tiefe} C ${ri},${tiefe * 0.6} ${ra - schulter * 0.6},0 ${ra},0
+    L ${breite},0 L ${breite},62 L 0,62 Z`);
+}
+function zeigeRegister(name) {
+  aktivesRegister = name;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("aktiv", b.dataset.register === name));
+  document.querySelectorAll(".register").forEach(r => r.classList.toggle("aktiv", r.id === `register-${name}`));
+  positioniereWelle();
+  renderTeilenLeiste();
+  if (name === "route") setTimeout(zeichneKarte, 30);
+  if (name === "bericht" && berichtVeraltet) renderBericht();
+  window.scrollTo({ top: 0 });
+}
+document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => zeigeRegister(b.dataset.register)));
+window.addEventListener("resize", positioniereWelle);
+window.addEventListener("load", positioniereWelle);
+
+// ── Start ────────────────────────────────────────────────────────────
+(async () => {
+  formularLeeren();
+  try {
+    daten = normalisiere(await idb.get("daten", "tagebuch"));
+  } catch (fehler) {
+    setzeStand("⚠ Speicher nicht verfügbar");
+    console.error(fehler);
+  }
+  renderAlles();
+  positioniereWelle();
+  // Speicher als "dauerhaft" anfragen, damit iOS die Daten nicht aufräumt
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch { /* egal */ }
+  // Offline-Betrieb: App und Bibliotheken zwischenspeichern
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
