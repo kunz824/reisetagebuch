@@ -229,6 +229,20 @@
     background: var(--bg-panel-2);
     cursor: zoom-in;
   }
+  .sicherung-hinweis {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-panel-2);
+    border: 1px dashed var(--accent-soft);
+    border-radius: 10px;
+    padding: 8px 8px 8px 12px;
+    margin-bottom: 12px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .sicherung-hinweis span { flex: 1; min-width: 0; }
+  .sicherung-hinweis .btn-speichern { height: 36px; font-size: 13.5px; padding: 0 12px; }
   .leer { color: var(--text-dim); font-size: 13.5px; padding: 26px 12px; text-align: center; margin: 0; line-height: 1.5; }
 
   /* Auswahlleiste zum Teilen (über der Tabbar) */
@@ -623,6 +637,10 @@
       <button type="button" class="btn-speichern" id="neuerEintragBtn">＋ Neuer Eintrag</button>
       <button type="button" class="btn-abbrechen" id="auswahlBtn">💬 Teilen</button>
     </div>
+    <div class="sicherung-hinweis" id="sicherungHinweis" hidden>
+      <span id="sicherungHinweisText">Neue Einträge seit der letzten Sicherung</span>
+      <button type="button" class="btn-speichern" id="sicherungJetzt">💾 Sichern</button>
+    </div>
     <div id="tagListe"></div>
     <p class="leer" id="tagListeLeer" hidden>Noch keine Einträge.<br>Tippe auf „Neuer Eintrag“ und halte den ersten Reisetag fest.</p>
   </section>
@@ -713,7 +731,8 @@
 
     <h2>Datensicherung</h2>
     <div class="formular">
-      <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät. Erstelle unterwegs ab und zu eine Sicherung (z.B. in iCloud Drive), damit nichts verloren geht, wenn das Telefon verloren geht.</p>
+      <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät. Die Sicherung hat immer denselben Dateinamen: Beim ersten Mal im Teilen-Menü „In Dateien sichern“ → OneDrive → <strong>02_Ferien › New Zealand Reise › Reisetagebuch</strong> wählen, danach jeweils nur noch „Ersetzen“.</p>
+      <p class="hinweis" id="letzteSicherung"></p>
       <div class="knopf-reihe">
         <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Sicherung erstellen</button>
         <label class="btn-abbrechen" for="sicherungInput" style="cursor:pointer">↺ Sicherung laden</label>
@@ -869,6 +888,7 @@ function normalisiere(roh) {
   d.eintraege = Array.isArray(d.eintraege) ? d.eintraege : [];
   d.eintraege.forEach(e => { e.fotos = Array.isArray(e.fotos) ? e.fotos : []; });
   d.tracks = Array.isArray(d.tracks) ? d.tracks : [];
+  d.meta = Object.assign({ geaendert: "", letzteSicherung: "" }, d.meta || {});
   return d;
 }
 let daten = leereDaten();
@@ -876,6 +896,7 @@ let daten = leereDaten();
 function setzeStand(text) { document.getElementById("speicherStand").textContent = text; }
 
 async function speichere() {
+  daten.meta = Object.assign({}, daten.meta, { geaendert: new Date().toISOString() });
   try {
     await idb.put("daten", daten, "tagebuch");
     setzeStand("");   // gespeichert: keine Anzeige nötig
@@ -1012,6 +1033,7 @@ function renderAlles() {
 
   renderTagebuch();
   renderTracks();
+  renderSicherungsInfo();
   for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende]]) {
     const el = document.getElementById(id);
     if (document.activeElement !== el) el.value = wert || "";
@@ -2000,6 +2022,28 @@ document.getElementById("pdfBtn").addEventListener("click", () => {
 });
 
 // ── Datensicherung ───────────────────────────────────────────────────
+// Anzeige "letzte Sicherung" und Erinnerung im Tagebuch
+function renderSicherungsInfo() {
+  const m = daten.meta || {};
+  const letzte = m.letzteSicherung ? new Date(m.letzteSicherung) : null;
+  document.getElementById("letzteSicherung").textContent = letzte
+    ? `Letzte Sicherung: ${letzte.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}, ${letzte.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}`
+    : "Noch keine Sicherung erstellt.";
+  // Erinnern, wenn es ungesicherte Änderungen gibt und die letzte Sicherung
+  // länger als einen Tag zurückliegt (bzw. es noch keine gibt)
+  const ungesichert = daten.eintraege.length > 0 && (!letzte || (m.geaendert && new Date(m.geaendert) > letzte));
+  const alt = !letzte || Date.now() - letzte.getTime() > 24 * 3600 * 1000;
+  const hinweis = document.getElementById("sicherungHinweis");
+  hinweis.hidden = !(ungesichert && alt);
+  if (!hinweis.hidden) {
+    const tage = letzte ? Math.floor((Date.now() - letzte.getTime()) / 86400000) : null;
+    document.getElementById("sicherungHinweisText").textContent = letzte
+      ? `Neue Einträge seit der letzten Sicherung (vor ${tage} Tag${tage === 1 ? "" : "en"})`
+      : "Noch keine Sicherung im OneDrive";
+  }
+}
+document.getElementById("sicherungJetzt").addEventListener("click", () => document.getElementById("sicherungBtn").click());
+
 document.getElementById("sicherungBtn").addEventListener("click", async () => {
   document.getElementById("dialogKnoepfe").innerHTML = "";
   document.getElementById("dialogTitel").textContent = "Sicherung";
@@ -2015,11 +2059,19 @@ document.getElementById("sicherungBtn").addEventListener("click", async () => {
     }
     const blob = new Blob([JSON.stringify({ format: "reisetagebuch", version: 1, erstellt: new Date().toISOString(), daten, fotos })],
       { type: "application/json" });
-    const datei = new File([blob], `${dateiName(reiseTitel())}-sicherung-${heuteISO()}.json`, { type: "application/json" });
+    // Fester Dateiname (11.10.2026): so ersetzt jede neue Sicherung die alte im
+    // OneDrive-Ordner, statt dass sich Dateien mit Datum ansammeln.
+    const datei = new File([blob], `${dateiName(reiseTitel())}-sicherung.json`, { type: "application/json" });
     knopf.disabled = false;
     knopf.textContent = `💾 Sicherung speichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
-    knopf.onclick = async () => { if (await teileDatei(datei, "Sicherung Reisetagebuch")) dialogStatus("Gespeichert. Am besten in iCloud Drive ablegen."); };
-    dialogStatus("Bereit. Im Teilen-Menü „In Dateien sichern“ wählen.");
+    knopf.onclick = async () => {
+      if (!(await teileDatei(datei, "Sicherung Reisetagebuch"))) return;
+      daten.meta.letzteSicherung = new Date().toISOString();
+      try { await idb.put("daten", daten, "tagebuch"); } catch { /* egal */ }
+      renderSicherungsInfo();
+      dialogStatus("Gesichert. Fragt OneDrive nach „Ersetzen“ oder „Beide behalten“: „Ersetzen“ wählen.");
+    };
+    dialogStatus(`Bereit. Im Teilen-Menü „In Dateien sichern“ → OneDrive → 02_Ferien › New Zealand Reise › Reisetagebuch. Dateiname: ${datei.name}`);
   } catch (fehler) {
     dialogStatus("Die Sicherung konnte nicht erstellt werden.");
     console.error(fehler);
