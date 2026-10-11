@@ -47,7 +47,7 @@
      Element, sondern der untere Teil des Seitenaufbaus: iOS ordnet
      fixierte Elemente in der Home-Bildschirm-App an einem zu kurzen
      Fenster aus, wodurch die Leiste zu hoch sass. */
-  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  html, body { height: 100%; overscroll-behavior: none; }
   /* Fläche unterhalb der App (iOS lässt dort teils einen Streifen frei)
      in der Farbe der Tabbar, damit die Leiste bis ganz unten reicht. */
   html { background: #1b2029; }
@@ -73,7 +73,7 @@
   }
   main {
     padding-inline: 16px;
-    padding-block: 18px 40px;
+    padding-block: 18px calc(100px + env(safe-area-inset-bottom, 0px));
     max-width: 640px;
     margin: 0 auto;
   }
@@ -597,18 +597,22 @@
   /* ── Tabbar (11.10.2026 überarbeitet) ─────────────────────────────
      Einfarbig über die ganze Höhe inkl. Home-Balken-Bereich des iPhones,
      aktives Register als Farbpille statt Mulde. */
+  /* 11.10.2026: Wie bei Tinu-Trading (dort funktioniert es): Leiste fixiert
+     und um die Lücke nach unten geschoben, die iOS unter dem App-Fenster
+     frei lässt (--luecke, per Skript gemessen). So sitzt sie ganz unten. */
   #tabBar {
-    position: relative;
-    flex: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
     display: flex;
     justify-content: space-around;
     align-items: center;
     background: #1b2029;   /* deckend: kein Flackern beim Scrollen auf iOS */
-    transform: translateZ(0);
+    transform: translate3d(0, var(--luecke, 0px), 0);
     border-top: 1px solid var(--border);
     padding: 7px 8px calc(6px + env(safe-area-inset-bottom, 0px));
   }
-  html.ios-kurz #tabBar { padding-bottom: 8px; }
   #tabBar {
     z-index: 10;
   }
@@ -855,7 +859,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 10:55";
+const APP_VERSION = "11.10.2026 · 11:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2334,7 +2338,7 @@ function pruefeFensterhoehe() {
   const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
   const hoch = matchMedia("(orientation: portrait)").matches;
   const luecke = Math.max(screen.height, screen.width) - window.innerHeight;
-  document.documentElement.classList.toggle("ios-kurz", standalone && hoch && luecke >= 20 && luecke < 80);
+  document.documentElement.style.setProperty("--luecke", `${standalone && hoch && luecke > 0 && luecke < 100 ? luecke : 0}px`);
 }
 pruefeFensterhoehe();
 window.addEventListener("resize", pruefeFensterhoehe);
