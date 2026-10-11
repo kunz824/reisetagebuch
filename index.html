@@ -798,7 +798,7 @@
 
     <h2>Datensicherung</h2>
     <div class="formular">
-      <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät. „💾 Speichern“ oben erstellt die Sicherung, immer mit demselben Dateinamen: Beim ersten Mal im Teilen-Menü „In Dateien sichern“ → OneDrive → <strong>02_Ferien › New Zealand Reise › Reisetagebuch</strong> wählen, danach jeweils nur noch „Ersetzen“.</p>
+      <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät.<br>Regelmässige Sicherung in der Cloud vornehmen.</p>
       <p class="hinweis" id="letzteSicherung"></p>
       <p class="hinweis" id="appVersion" style="opacity:.7"></p>
     </div>
@@ -855,7 +855,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 10:45";
+const APP_VERSION = "11.10.2026 · 10:55";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2214,8 +2214,8 @@ function renderSicherungsInfo() {
   const m = daten.meta || {};
   const letzte = m.letzteSicherung ? new Date(m.letzteSicherung) : null;
   document.getElementById("letzteSicherung").textContent = letzte
-    ? `Letzte Sicherung: ${letzte.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}, ${letzte.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}`
-    : "Noch keine Sicherung erstellt.";
+    ? `Sicherungsdatum: ${letzte.toLocaleDateString("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}, ${letzte.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}`
+    : "Sicherungsdatum: noch keine Sicherung";
   // Erinnern, wenn es ungesicherte Änderungen gibt und die letzte Sicherung
   // länger als einen Tag zurückliegt (bzw. es noch keine gibt)
   const ungesichert = daten.eintraege.length > 0 && (!letzte || (m.geaendert && new Date(m.geaendert) > letzte));
@@ -2378,7 +2378,7 @@ window.addEventListener("load", positioniereWelle);
     setzeStand("⚠ Speicher nicht verfügbar");
     console.error(fehler);
   }
-  document.getElementById("appVersion").textContent = `App-Version ${APP_VERSION}`;
+  document.getElementById("appVersion").textContent = `APP-Version ${APP_VERSION}`;
   renderAlles();
   positioniereWelle();
   // Speicher als "dauerhaft" anfragen, damit iOS die Daten nicht aufräumt
