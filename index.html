@@ -450,6 +450,30 @@
   .leaflet-control-attribution { background: rgba(16, 20, 27, 0.7) !important; color: var(--text-dim) !important; font-size: 9px; }
   .leaflet-control-attribution a { color: var(--text-dim) !important; }
   .leaflet-bar a { background: var(--bg-panel-2); color: var(--text); border-color: var(--border); }
+  /* Mini-Fotos an den Kartenpunkten (ab Zoomstufe FOTO_ZOOM sichtbar) */
+  .karte-foto {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: 9px;
+    border: 2px solid var(--accent);
+    background: var(--bg-panel-2);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    cursor: zoom-in;
+  }
+  .karte-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .karte-foto .anzahl {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    background: rgba(16, 20, 27, 0.85);
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 7px;
+    padding: 1px 5px;
+  }
   .karte-marker {
     width: 26px;
     height: 26px;
@@ -863,7 +887,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 11:10";
+const APP_VERSION = "11.10.2026 · 11:20";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1000,7 +1024,7 @@ function tagesPunkte(datum) {
   const punkte = [];
   const eintraege = eintraegeAm(datum);
   for (const e of eintraege) {
-    if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: e.ort });
+    if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: e.ort, fotos: e.fotos });
   }
   const thema = eintraege[0];
   if (thema && Number.isFinite(thema.zielLat) && Number.isFinite(thema.zielLon)) {
@@ -1579,7 +1603,8 @@ function zweistufig(btn, frage, aktion) {
 }
 
 // ── Route: Karte + GPX ───────────────────────────────────────────────
-let karte = null, karteEbene = null;
+let karte = null, karteEbene = null, fotoEbene = null;
+const FOTO_ZOOM = 9;   // ab dieser Zoomstufe erscheinen die Mini-Fotos
 
 function initKarte() {
   if (karte) return true;
@@ -1590,12 +1615,20 @@ function initKarte() {
   karte = L.map("karte", { zoomControl: true });
   L.tileLayer(KACHELN, { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende' }).addTo(karte);
   karteEbene = L.layerGroup().addTo(karte);
+  fotoEbene = L.layerGroup();
+  // Mini-Fotos nur beim Hineinzoomen zeigen, sonst wird die Karte unruhig
+  const fotosUmschalten = () => {
+    if (karte.getZoom() >= FOTO_ZOOM) fotoEbene.addTo(karte); else fotoEbene.remove();
+  };
+  karte.on("zoomend", fotosUmschalten);
+  karte.whenReady(fotosUmschalten);
   return true;
 }
 function zeichneKarte() {
   if (!initKarte()) return;
   karte.invalidateSize();
   karteEbene.clearLayers();
+  fotoEbene.clearLayers();
   const grenzen = [];
   for (const t of daten.tracks) {
     L.polyline(t.punkte, { color: "#5aa9bb", weight: 3, opacity: 0.9 }).bindPopup(t.name).addTo(karteEbene);
@@ -1613,6 +1646,15 @@ function zeichneKarte() {
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
     L.marker([e.lat, e.lon], { icon }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([e.lat, e.lon]);
+    // Mini-Foto oberhalb des Punktes; Antippen öffnet alle Fotos dieses Eintrags
+    if (e.fotos && e.fotos.length) {
+      const html = `<div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}">${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length}</span>` : ""}</div>`;
+      const fotoIcon = L.divIcon({ className: "", html, iconSize: [60, 60], iconAnchor: [30, 76] });
+      const m = L.marker([e.lat, e.lon], { icon: fotoIcon, zIndexOffset: 500 })
+        .on("click", () => oeffneLightbox(e.fotos, 0))
+        .on("add", () => { const el = m.getElement(); if (el) ladeBilderIn(el); });
+      m.addTo(fotoEbene);
+    }
   });
   if (grenzen.length > 1) karte.fitBounds(grenzen, { padding: [30, 30], maxZoom: 13 });
   else if (grenzen.length === 1) karte.setView(grenzen[0], 11);
