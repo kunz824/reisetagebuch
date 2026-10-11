@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tagebuch">
-<meta name="theme-color" content="#10141b">
+<meta name="theme-color" content="#1b2029">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -51,6 +51,7 @@
   /* Fläche unterhalb der App (iOS lässt dort teils einen Streifen frei)
      in der Farbe der Tabbar, damit die Leiste bis ganz unten reicht. */
   html { background: #1b2029; }
+  #statusAbdeckung { flex: none; height: env(safe-area-inset-top, 0px); background: var(--bg); }
   #scroller {
     position: relative;
     flex: 1 1 auto;
@@ -72,7 +73,7 @@
   }
   main {
     padding-inline: 16px;
-    padding-block: calc(22px + env(safe-area-inset-top, 0px)) calc(110px + env(safe-area-inset-bottom, 0px));
+    padding-block: 18px 40px;
     max-width: 640px;
     margin: 0 auto;
   }
@@ -292,7 +293,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
     z-index: 11;
     display: flex;
     justify-content: center;
@@ -606,6 +607,9 @@
     transform: translateZ(0);
     border-top: 1px solid var(--border);
     padding: 7px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+  html.ios-kurz #tabBar { padding-bottom: 8px; }
+  #tabBar {
     z-index: 10;
   }
   #tabBarPlatte, .tab-welle { display: none; }
@@ -664,10 +668,15 @@
 </head>
 <body>
 
+<div id="statusAbdeckung" aria-hidden="true"></div>
 <div id="scroller">
 <main>
   <h1><span id="kopfTitel">Reisetagebuch</span><span class="unterzeile" id="kopfZeitraum"></span></h1>
   <p class="stand-anzeige" id="speicherStand" role="status"></p>
+  <div class="sicherung-hinweis" id="updateHinweis" hidden>
+    <span>Neue Version verfügbar</span>
+    <button type="button" class="btn-speichern" id="updateLaden">↻ Laden</button>
+  </div>
 
   <!-- ── Register 1: Tagebuch ──────────────────────────────────────── -->
   <section id="register-tagebuch" class="register aktiv">
@@ -846,7 +855,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 10:30";
+const APP_VERSION = "11.10.2026 · 10:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2317,6 +2326,45 @@ document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", (
 // Zurück aus dem Editor: Eingaben bleiben stehen, bis gespeichert oder verworfen wird
 document.getElementById("editorZurueck").addEventListener("click", () => zeigeRegister("tagebuch"));
 window.addEventListener("resize", positioniereWelle);
+
+// iPhone-Startbildschirm-App: iOS lässt das App-Fenster teils oberhalb des
+// Home-Balkens enden und füllt den Rest mit der Grundfarbe (theme-color =
+// Leistenfarbe). Dann den Abstand zum Home-Balken nicht nochmals einrechnen.
+function pruefeFensterhoehe() {
+  const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  const hoch = matchMedia("(orientation: portrait)").matches;
+  const luecke = Math.max(screen.height, screen.width) - window.innerHeight;
+  document.documentElement.classList.toggle("ios-kurz", standalone && hoch && luecke >= 20 && luecke < 80);
+}
+pruefeFensterhoehe();
+window.addEventListener("resize", pruefeFensterhoehe);
+window.addEventListener("orientationchange", () => setTimeout(pruefeFensterhoehe, 300));
+
+// ── Update-Hinweis: neue Version auf GitHub erkennen ─────────────────
+// Vergleicht die Versionskennung der Datei auf dem Server mit der laufenden.
+// So kommt jedes Update an, ohne die App löschen zu müssen.
+async function pruefeUpdate() {
+  try {
+    const a = await fetch(`./index.html?v=${Date.now()}`, { cache: "no-store" });
+    if (!a.ok) return;
+    const m = (await a.text()).match(/const APP_VERSION = "([^"]+)"/);
+    if (m && m[1] !== APP_VERSION) {
+      const leiste = document.getElementById("updateHinweis");
+      leiste.querySelector("span").textContent = `Neue Version ${m[1]} verfügbar`;
+      leiste.hidden = false;
+    }
+  } catch { /* offline: egal */ }
+}
+document.getElementById("updateLaden").addEventListener("click", async () => {
+  try {
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update();
+    if (window.caches) for (const k of await caches.keys()) if (k.startsWith("reisetagebuch-app")) await caches.delete(k);
+  } catch { /* egal */ }
+  location.reload();
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pruefeUpdate(); });
+setTimeout(pruefeUpdate, 1500);
 
 
 window.addEventListener("load", positioniereWelle);

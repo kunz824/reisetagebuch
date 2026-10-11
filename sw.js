@@ -1,7 +1,7 @@
 // Service Worker Reisetagebuch (11.10.2026): App und Bibliotheken für
 // den Offline-Betrieb unterwegs zwischenspeichern. Kartenkacheln, die
 // einmal angesehen wurden, bleiben ebenfalls verfügbar.
-const APP_CACHE = "reisetagebuch-app-v2";
+const APP_CACHE = "reisetagebuch-app-v3";
 const KACHEL_CACHE = "reisetagebuch-kacheln-v2";
 const APP_DATEIEN = [
   "./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png",
@@ -26,7 +26,8 @@ self.addEventListener("fetch", ev => {
   const url = new URL(req.url);
   // Eigene Dateien: zuerst Netz (damit Updates ankommen), sonst Cache
   if (url.origin === location.origin) {
-    ev.respondWith(fetch(req).then(r => {
+    // no-store: am HTTP-Cache vorbei, damit ein Update sofort ankommt
+    ev.respondWith(fetch(req, { cache: "no-store" }).then(r => {
       const kopie = r.clone();
       caches.open(APP_CACHE).then(c => c.put(req, kopie));
       return r;
