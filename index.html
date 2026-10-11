@@ -51,7 +51,7 @@
   }
   main {
     padding-inline: 16px;
-    padding-block: calc(22px + env(safe-area-inset-top, 0px)) 130px;
+    padding-block: calc(22px + env(safe-area-inset-top, 0px)) calc(110px + env(safe-area-inset-bottom, 0px));
     max-width: 640px;
     margin: 0 auto;
   }
@@ -236,7 +236,7 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px));
     z-index: 11;
     display: flex;
     justify-content: center;
@@ -535,7 +535,9 @@
   #lbZurueck { left: 10px; top: 50%; transform: translateY(-50%); }
   #lbVor { right: 10px; top: 50%; transform: translateY(-50%); }
 
-  /* ── Tabbar (aus der Tinu-Trading-Vorlage) ────────────────────────── */
+  /* ── Tabbar (11.10.2026 überarbeitet) ─────────────────────────────
+     Einfarbig über die ganze Höhe inkl. Home-Balken-Bereich des iPhones,
+     aktives Register als Farbpille statt Mulde. */
   #tabBar {
     position: fixed;
     left: 0;
@@ -543,27 +545,15 @@
     bottom: 0;
     display: flex;
     justify-content: space-around;
-    align-items: flex-start;
-    gap: 4px;
-    background: var(--tabbar);
-    padding: 14px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+    align-items: center;
+    background: rgba(27, 32, 41, 0.94);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid var(--border);
+    padding: 7px 8px calc(7px + env(safe-area-inset-bottom, 0px));
     z-index: 10;
-    --tab-x: 60px;
   }
-  #tabBarPlatte { position: absolute; top: 0; left: 0; width: 100%; height: 62px; z-index: -1; display: block; }
-  .tab-welle {
-    position: absolute;
-    left: calc(var(--tab-x) - 16px);
-    top: -4px;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: radial-gradient(circle, var(--accent) 0%, var(--accent-soft) 65%, transparent 100%);
-    transition: left 0.25s ease;
-    z-index: 1;
-    pointer-events: none;
-  }
-  .stand-anzeige { position: absolute; top: 3px; right: 10px; font-size: 9px; color: var(--text-dim); white-space: nowrap; z-index: 2; }
+  #tabBarPlatte, .tab-welle { display: none; }
   .tab-btn {
     background: none;
     border: none;
@@ -572,31 +562,31 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 0 6px;
+    gap: 3px;
+    padding: 2px 6px;
     flex: 1;
-    max-width: 96px;
-    position: relative;
-    z-index: 2;
-    transition: transform 0.25s ease;
+    max-width: 120px;
+    -webkit-tap-highlight-color: transparent;
   }
-  .tab-btn.aktiv { transform: translateY(-20px); }
   .tab-icon {
-    width: 32px;
-    height: 32px;
+    width: 58px;
+    height: 30px;
+    border-radius: 15px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 19px;
-    transition: transform 0.25s ease, filter 0.2s ease;
-    filter: grayscale(1) opacity(0.75);
+    font-size: 18px;
+    transition: background 0.2s ease, filter 0.2s ease;
+    filter: grayscale(1) opacity(0.7);
   }
-  .tab-btn.aktiv .tab-icon { transform: translateY(2px) scale(1.05); filter: none; }
-  .tab-label { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
-  .tab-btn.aktiv .tab-label { color: var(--text); font-weight: 600; }
+  .tab-btn.aktiv .tab-icon { background: var(--accent-soft); filter: none; }
+  .tab-label { font-size: 10.5px; color: var(--text-dim); white-space: nowrap; }
+  .tab-btn.aktiv .tab-label { color: var(--accent); font-weight: 600; }
+  .stand-anzeige { font-size: 11.5px; color: var(--neg); margin: -8px 0 12px; }
+  .stand-anzeige:empty { display: none; }
 
   @media (prefers-reduced-motion: reduce) {
-    .tab-btn, .tab-icon, .tab-welle { transition: none; }
+    .tab-icon { transition: none; }
   }
 
   /* ── Druck: nur der Bericht, hell, eine Seite je Tag ──────────────── */
@@ -619,6 +609,7 @@
 
 <main>
   <h1><span id="kopfTitel">Reisetagebuch</span><span class="unterzeile" id="kopfZeitraum"></span></h1>
+  <p class="stand-anzeige" id="speicherStand" role="status"></p>
 
   <!-- ── Register 1: Tagebuch ──────────────────────────────────────── -->
   <section id="register-tagebuch" class="register aktiv">
@@ -762,7 +753,6 @@
     <path id="tabBarPfad" style="fill:var(--tabbar-platte);stroke:var(--border)" stroke-width="0.6"></path>
   </svg>
   <span class="tab-welle"></span>
-  <span class="stand-anzeige" id="speicherStand">💾 auf diesem Gerät</span>
   <button class="tab-btn aktiv" data-register="tagebuch" type="button">
     <span class="tab-icon" aria-hidden="true">📖</span><span class="tab-label">Tagebuch</span>
   </button>
@@ -888,7 +878,7 @@ function setzeStand(text) { document.getElementById("speicherStand").textContent
 async function speichere() {
   try {
     await idb.put("daten", daten, "tagebuch");
-    setzeStand("💾 auf diesem Gerät");
+    setzeStand("");   // gespeichert: keine Anzeige nötig
   } catch (fehler) {
     setzeStand("⚠ Speichern fehlgeschlagen");
     console.error(fehler);
@@ -1878,10 +1868,10 @@ async function teileDatei(datei, titel) {
   return true;
 }
 
-function whatsappText(tage) {
-  const teile = [`📖 *${reiseTitel()}*`];
+function whatsappText(tage, mitReisetitel = true) {
+  const teile = mitReisetitel ? [`📖 *${reiseTitel()}*`, ""] : [];
   for (const datum of tage) {
-    teile.push("", `🗓 *${tagLabel(datum)} · ${datumLang(datum)}*`);
+    teile.push(`🗓 *${tagLabel(datum)} · ${datumLang(datum)}*`);
     for (const e of eintraegeAm(datum)) {
       if (e.ort) teile.push(`📍 ${e.ort}`);
       if (e.titel) teile.push(`*${e.titel}*`);
@@ -1917,6 +1907,21 @@ function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
   return knopf;
 }
 
+// 11.10.2026: Tag für Tag teilen. WhatsApp ordnet mehrere Fotos aus einem
+// einzigen Teilen-Vorgang beliebig an und hängt den Text als eigene
+// Nachricht ans Ende. Darum wird jeder Tag einzeln geteilt (Fotos des
+// Tages + sein Text) -- so bleiben Text und Fotos zusammen und in der
+// richtigen Reihenfolge. iOS verlangt dafür pro Tag ein Tippen.
+async function tagesDateien(datum, start) {
+  const dateien = [];
+  const ids = eintraegeAm(datum).flatMap(e => e.fotos).slice(0, 30);
+  for (let i = 0; i < ids.length; i++) {
+    const rec = await idb.get("fotos", ids[i]);
+    if (rec) dateien.push(new File([rec.voll], `tag-${datum}-${String(start + i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+  }
+  return dateien;
+}
+
 async function oeffneDialogTage(tage) {
   document.getElementById("dialogKnoepfe").innerHTML = "";
   document.getElementById("dialogTitel").textContent = tage.length === 1
@@ -1924,24 +1929,43 @@ async function oeffneDialogTage(tage) {
   dialogStatus("Fotos werden vorbereitet …");
   dialogEl.hidden = false;
 
-  const text = whatsappText(tage);
-  const fotoIds = tage.flatMap(d => eintraegeAm(d).flatMap(e => e.fotos)).slice(0, 30);
-
-  const fotosKnopf = dialogKnopf("💬 Text + Fotos (WhatsApp)", "btn-speichern", async () => {
-    // Text zusätzlich in die Zwischenablage: WhatsApp übernimmt am iPhone
-    // bei Fotos den Begleittext nicht immer.
-    try { navigator.clipboard && navigator.clipboard.writeText(text); } catch { /* egal */ }
-    if (navigator.canShare && navigator.canShare({ files: dateien })) {
+  // Pro Tag ein Knopf, in Reisereihenfolge. Der nächste offene Tag ist
+  // jeweils hervorgehoben.
+  const knoepfe = [];
+  const markiereNaechsten = () => {
+    const naechster = knoepfe.find(k => !k.erledigt && !k.btn.disabled);
+    knoepfe.forEach(k => { k.btn.className = k === naechster ? "btn-speichern" : "btn-abbrechen"; });
+    if (!naechster && knoepfe.every(k => k.erledigt)) dialogStatus("Alle Tage geteilt.");
+  };
+  for (let i = 0; i < tage.length; i++) {
+    const datum = tage[i];
+    const eintrag = { datum, dateien: [], erledigt: false };
+    // Beim ersten Tag steht der Reisetitel dabei
+    eintrag.text = whatsappText([datum], i === 0);
+    eintrag.btn = dialogKnopf(`💬 ${tagLabel(datum)} · ${datumKurz(datum)}`, "btn-abbrechen", async () => {
+      try { navigator.clipboard && navigator.clipboard.writeText(eintrag.text); } catch { /* egal */ }
       try {
-        await navigator.share({ files: dateien, text });
-        dialogStatus("Geteilt. Fehlt in WhatsApp der Text: lange ins Eingabefeld tippen und „Einsetzen“ wählen.");
-      } catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. „Nur Text“ oder PDF versuchen."); }
-    } else {
-      dialogStatus("Dieses Gerät kann keine Fotos teilen. „Nur Text“ oder PDF nutzen.");
-    }
-  });
-  fotosKnopf.disabled = true;
-  dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
+        if (eintrag.dateien.length && navigator.canShare && navigator.canShare({ files: eintrag.dateien })) {
+          await navigator.share({ files: eintrag.dateien, text: eintrag.text });
+        } else if (navigator.share) {
+          await navigator.share({ text: eintrag.text });
+        } else {
+          window.open(`https://wa.me/?text=${encodeURIComponent(eintrag.text)}`, "_blank", "noopener");
+        }
+        eintrag.erledigt = true;
+        eintrag.btn.textContent = `✓ ${tagLabel(datum)} · ${datumKurz(datum)} geteilt`;
+        const offen = knoepfe.filter(k => !k.erledigt).length;
+        dialogStatus(offen ? `Weiter mit dem nächsten Tag (${offen} offen). Fehlt in WhatsApp der Text: ins Eingabefeld tippen und „Einsetzen“ wählen.` : "");
+        markiereNaechsten();
+      } catch (e) {
+        if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. PDF versuchen.");
+      }
+    });
+    eintrag.btn.disabled = true;
+    knoepfe.push(eintrag);
+  }
+  dialogKnopf("💬 Nur Text (alle Tage)", "btn-abbrechen", async () => {
+    const text = whatsappText(tage);
     if (navigator.share) {
       try { await navigator.share({ text }); } catch { /* abgebrochen */ }
     } else {
@@ -1951,19 +1975,18 @@ async function oeffneDialogTage(tage) {
   pdfKnopf(tage, false, `${dateiName(reiseTitel())}-${tage.length === 1 ? dateiName(tagLabel(tage[0])) : tage.length + "-tage"}`);
   dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
 
-  const dateien = [];
-  for (let i = 0; i < fotoIds.length; i++) {
-    const rec = await idb.get("fotos", fotoIds[i]);
-    if (rec) dateien.push(new File([rec.voll], `foto-${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+  let nr = 0;
+  for (const k of knoepfe) {
+    k.dateien = await tagesDateien(k.datum, nr);
+    nr += k.dateien.length;
+    const n = k.dateien.length;
+    k.btn.textContent = `💬 ${tagLabel(k.datum)} · ${datumKurz(k.datum)} · ${n ? `${n} Foto${n === 1 ? "" : "s"} + Text` : "nur Text"}`;
+    k.btn.disabled = false;
   }
-  if (!dateien.length) {
-    fotosKnopf.textContent = "💬 Keine Fotos an diesen Tagen";
-    dialogStatus("Text oder PDF teilen.");
-  } else {
-    fotosKnopf.disabled = false;
-    fotosKnopf.textContent = `💬 Text + ${dateien.length} Foto${dateien.length === 1 ? "" : "s"} (WhatsApp)`;
-    dialogStatus(fotoIds.length === 30 ? "Es werden die ersten 30 Fotos geteilt." : "Bereit zum Teilen.");
-  }
+  markiereNaechsten();
+  dialogStatus(tage.length === 1
+    ? "Bereit. Fotos und Text gehen zusammen an WhatsApp."
+    : "Jeden Tag einzeln antippen, von oben nach unten. So bleiben Text und Fotos eines Tages zusammen.");
 }
 
 document.getElementById("pdfBtn").addEventListener("click", () => {
