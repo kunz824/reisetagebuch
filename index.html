@@ -779,7 +779,7 @@
         <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off">
       </label>
       <div id="ortBlock" style="display:flex;flex-direction:column;gap:12px">
-      <label>Ort
+      <label><span id="eOrtLabel">Ort</span>
         <span class="ort-zeile">
           <input type="search" id="eOrt" maxlength="60" placeholder="z.B. Kyoto" autocomplete="off" enterkeyhint="search">
           <button type="button" id="ortGps" title="Aktuellen Standort übernehmen" aria-label="Aktuellen Standort übernehmen">📍</button>
@@ -826,7 +826,7 @@
       <div class="stat"><p class="label">km Tracks</p><p class="zahl" id="rTrackKm">–</p></div>
     </div>
     <div id="karte" style="margin-top:6px"></div>
-    <p class="hinweis" style="margin-top:8px">Die Stationen kommen aus den Einträgen (📍 oder 🔍 beim Ort). Gestrichelt: Verbindung der Stationen. Blau: aufgezeichnete Tracks.</p>
+    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag, die Nummern sind die Sub-Themen. Gestrichelt: Route des Tages. Blau: aufgezeichnete Tracks.</p>
 
     <h2>Tracks (GPX)</h2>
     <div class="liste" id="trackListe"></div>
@@ -923,7 +923,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 11:45";
+const APP_VERSION = "11.10.2026 · 12:35";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1074,10 +1074,15 @@ function tagNummer(datum) {
   return tageMitEintraegen().indexOf(datum) + 1;
 }
 function tagLabel(datum) { const n = tagNummer(datum); return n ? `Tag ${n}` : "Vor der Reise"; }
-// Route je Tag = Orte der Sub-Themen (nummeriert) → Reiseziel des Haupteintrags.
-// Die Kilometer eines Tages werden aus diesen Punkten verdichtet.
+// Route je Tag = Start des Haupteintrags → Orte der Sub-Themen (nummeriert)
+// → Reiseziel des Haupteintrags. Die Kilometer eines Tages werden aus diesen
+// Punkten verdichtet.
 function tagesPunkte(datum, nummern = subNummern()) {
   const punkte = [];
+  const t = themaAm(datum);
+  if (t && Number.isFinite(t.lat) && Number.isFinite(t.lon)) {
+    punkte.push({ lat: t.lat, lon: t.lon, datum, titel: `Start: ${t.ort || "Start"}`, ort: t.ort, start: true });
+  }
   for (const e of eintraegeAm(datum)) {
     if (istThema(e)) continue;
     if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: e.ort, fotos: e.fotos, nr: nummern.get(e.id) });
@@ -1089,12 +1094,18 @@ function tagesPunkte(datum, nummern = subNummern()) {
   return punkte;
 }
 function tagKm(datum) { return streckeKm(tagesPunkte(datum).map(p => [p.lat, p.lon])); }
-function tagStrecke(datum) {   // "Ersigen → Singapur" (erster Ort des Tages → Reiseziel)
+function tagStrecke(datum) {   // "Ersigen → Singapur" (Start bzw. erster Ort → Reiseziel)
   const thema = themaAm(datum);
-  const ersterOrt = (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
+  const start = (thema && thema.ort) || (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
   const ziel = thema && thema.ziel;
-  if (ziel) return ersterOrt ? `${ersterOrt} → ${ziel}` : `→ ${ziel}`;
-  return "";
+  if (ziel) return start ? `${start} → ${ziel}` : `→ ${ziel}`;
+  return start;
+}
+function tagStreckeSymbole(datum) {   // "📍 Ersigen → 🏁 Singapur"
+  const thema = themaAm(datum);
+  const start = (thema && thema.ort) || (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
+  const ziel = thema && thema.ziel;
+  return [start && `📍 ${start}`, ziel && `🏁 ${ziel}`].filter(Boolean).join(" → ");
 }
 function stationen() { const n = subNummern(); return tageMitEintraegen().flatMap(d => tagesPunkte(d, n)); }
 function anzahlReisetage() {
@@ -1111,7 +1122,7 @@ function kennzahlen() {
     fotos: daten.eintraege.reduce((s, e) => s + e.fotos.length, 0),
     kmRoute: streckeKm(st.map(e => [e.lat, e.lon])),
     kmTracks: daten.tracks.reduce((s, t) => s + (t.km || 0), 0),
-    stationen: st.filter(p => !p.ziel).length,
+    stationen: st.filter(p => !p.ziel && !p.start).length,
   };
 }
 
@@ -1281,7 +1292,7 @@ function renderTagebuch() {
       ek.append(h3, bearbeiten);
       block.appendChild(ek);
       const ortText = istThema(e)
-        ? (e.ziel ? `🏁 ${tagStrecke(datum).replace("→", " → ")}` : "")
+        ? tagStreckeSymbole(datum)
         : (e.ort && e.titel ? `📍 ${e.ort}` : "");
       if (ortText) {
         const ort = document.createElement("p");
@@ -1385,10 +1396,12 @@ function renderRolle() {
     b.disabled = b.dataset.art === "thema" && !!vorhanden;
   });
   feld("zielBlock").hidden = art !== "thema";
-  feld("ortBlock").hidden = art === "thema";
+  // Haupteintrag: Ort-Feld = Start des Tages, dazu das Reiseziel
+  feld("eOrtLabel").textContent = art === "thema" ? "Start des Tages" : "Ort";
+  feld("eOrt").placeholder = art === "thema" ? "z.B. Ersigen" : "z.B. Kyoto";
   feld("fotoBlock").hidden = art === "thema";
   feld("eRolle").textContent = art === "thema"
-    ? "Haupteintrag des Tages: Titel, Reiseziel und Text. Orte und Fotos kommen in die Sub-Themen."
+    ? "Haupteintrag des Tages: Titel, Start → Reiseziel und Text. Fotos kommen in die Sub-Themen."
     : `Sub-Thema${vorhanden ? ` zu „${vorhanden.titel || "Haupteintrag"}“` : ""}: mit Ort, Karte und Fotos.`;
 }
 document.querySelectorAll("#eRolleWahl button").forEach(b => b.addEventListener("click", () => {
@@ -1641,8 +1654,8 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
   // Haupteintrag: kein Ort, keine Fotos; Sub-Thema: kein Reiseziel
   const eintrag = {
     id: form.id || neueId(), art: thema ? "thema" : "sub", datum, titel, text,
-    ort: thema ? "" : ort,
-    lat: thema ? null : form.lat, lon: thema ? null : form.lon, fotos: thema ? [] : [...form.fotos],
+    ort, lat: form.lat, lon: form.lon,   // beim Haupteintrag = Start des Tages
+    fotos: thema ? [] : [...form.fotos],
     ziel: thema ? feld("eZiel").value.trim() : "",
     zielLat: thema ? form.zLat : null, zielLon: thema ? form.zLon : null,
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
@@ -1728,10 +1741,13 @@ function zeichneKarte() {
   }
   st.forEach((e) => {
     // Sub-Themen tragen ihre laufende Nummer, das Reiseziel eine Flagge
-    const icon = L.divIcon({ className: "", html: `<div class="karte-marker${e.ziel ? " ziel" : ""}">${e.ziel ? "🏁" : e.nr}</div>`, iconSize: [26, 26], iconAnchor: e.ziel ? [-4, 30] : [13, 13] });   // Ziel leicht versetzt, damit es keinen Punkt verdeckt
+    // Start und Ziel ohne Nummer, leicht versetzt, damit sie keinen Punkt verdecken
+    const zeichen = e.ziel ? "🏁" : e.start ? "📍" : e.nr;
+    const anker = e.ziel ? [-4, 30] : e.start ? [30, 30] : [13, 13];
+    const icon = L.divIcon({ className: "", html: `<div class="karte-marker${e.ziel || e.start ? " ziel" : ""}">${zeichen}</div>`, iconSize: [26, 26], iconAnchor: anker });
     const inhalt = document.createElement("div");
     const b = document.createElement("strong");
-    b.textContent = `${e.ziel ? "Reiseziel" : `Nr. ${e.nr}`} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
+    b.textContent = `${e.ziel ? "Reiseziel" : e.start ? "Start" : `Nr. ${e.nr}`} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
     L.marker([e.lat, e.lon], { icon }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([e.lat, e.lon]);
@@ -1890,12 +1906,12 @@ async function statischeKarte() {
     st.forEach((e) => {
       const [x, y] = auf([e.lat, e.lon]);
       g.beginPath(); g.arc(x, y, 17, 0, Math.PI * 2);
-      g.fillStyle = e.ziel ? "#23262c" : "#d4a24e"; g.fill();
+      g.fillStyle = e.ziel || e.start ? "#23262c" : "#d4a24e"; g.fill();
       g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
       g.fillStyle = "#1a1d22"; g.font = "bold 17px -apple-system, Segoe UI, Roboto, sans-serif";
       g.textAlign = "center"; g.textBaseline = "middle";
-      if (e.ziel) g.fillStyle = "#d4a24e";
-      g.fillText(e.ziel ? "Z" : String(e.nr), x, y + 1);
+      if (e.ziel || e.start) g.fillStyle = "#d4a24e";
+      g.fillText(e.ziel ? "Z" : e.start ? "S" : String(e.nr), x, y + 1);
     });
     return c.toDataURL("image/jpeg", 0.86);
   };
@@ -2214,7 +2230,7 @@ function eintragWhatsapp(e, istThema, mitReisetitel) {
     const kmTag = tagKm(e.datum);
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);
     const strecke = tagStrecke(e.datum);
-    if (strecke) z.push(`🏁 ${strecke}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`);
+    if (strecke) z.push(`${tagStreckeSymbole(e.datum)}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`);
     else if (kmTag >= 1) z.push(`${formatZahlCH(kmTag)} km`);
   } else if (!themaAm(e.datum) && eintraegeAm(e.datum)[0].id === e.id) {
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);   // Tag ohne Haupteintrag
