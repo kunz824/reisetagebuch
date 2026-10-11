@@ -608,10 +608,14 @@
     display: flex;
     justify-content: space-around;
     align-items: center;
-    background: #1b2029;   /* deckend: kein Flackern beim Scrollen auf iOS */
-    transform: translate3d(0, var(--luecke, 0px), 0);
+    /* Gleiche Farbe wie die Fläche, die iOS unter dem App-Fenster zeigt
+       (Grundfarbe #10141b): so entsteht unten keine farbliche Kante. */
+    background: var(--bg);
+    transform: translateZ(0);
     border-top: 1px solid var(--border);
-    padding: 7px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    /* Liegt das Fenster schon über dem Home-Balken (--luecke > 0), den
+       Abstand dafür nicht nochmals einrechnen -- Texte bleiben sichtbar. */
+    padding: 8px 8px calc(8px + max(0px, env(safe-area-inset-bottom, 0px) - var(--luecke, 0px)));
   }
   #tabBar {
     z-index: 10;
@@ -859,7 +863,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 11:00";
+const APP_VERSION = "11.10.2026 · 11:10";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
