@@ -999,7 +999,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.10.2026 · 22:30";
+const APP_VERSION = "12.10.2026 · 22:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2915,7 +2915,7 @@ class OdAnmeldungNoetig extends Error { constructor() { super("Anmeldung bei One
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* egal */ } }
 // Anwendungs-ID der Microsoft-App-Registrierung "Reisetagebuch" (12.10.2026)
-const OD_CLIENT_ID = "5d8240f3-a2af-4fb5-992b-fca0e7c3835c";
+const OD_CLIENT_ID = "215ccdf2-a8d5-4edf-a625-5501e5e6ce2d";
 const odClientId = () => (lsGet("rt_od_client") || OD_CLIENT_ID).trim();
 const odEingerichtet = () => !!odClientId() && !!lsGet("rt_od_token");
 function b64url(bytes) {
