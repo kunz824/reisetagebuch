@@ -963,7 +963,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.10.2026 · 19:50";
+const APP_VERSION = "12.10.2026 · 20:15";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1964,14 +1964,17 @@ function ladeKachel(url) {
     img.src = url;
   });
 }
-async function statischeKarte() {
-  const st = stationen();
-  const alle = [...st.map(e => [e.lat, e.lon]), ...daten.tracks.flatMap(t => t.punkte)];
+const karteCacheMehr = new Map();
+async function statischeKarte(opt = {}) {
+  const st = opt.punkte || stationen();
+  const tracks = opt.punkte ? [] : daten.tracks;
+  const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte)];
   if (!alle.length) return null;
-  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon]), daten.tracks.map(t => t.id)]);
-  if (karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
+  const B = opt.B || 1400, H = opt.H || 900, RAND = opt.rand || 70;
+  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id), B, H]);
+  if (!opt.punkte && karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
+  if (opt.punkte && karteCacheMehr.has(schluessel)) return karteCacheMehr.get(schluessel);
 
-  const B = 1400, H = 900, RAND = 70;
   const px = (lat, lon, z) => {
     const s = Math.sin(lat * Math.PI / 180);
     const n = 256 * 2 ** z;
@@ -1984,7 +1987,7 @@ async function statischeKarte() {
     const by = Math.max(...p.map(q => q[1])) - Math.min(...p.map(q => q[1]));
     if (bx <= B - 2 * RAND && by <= H - 2 * RAND) break;
   }
-  if (alle.length === 1 || st.length === 1 && !daten.tracks.length) z = Math.min(z, 11);
+  if (alle.length === 1 || st.length === 1 && !tracks.length) z = Math.min(z, 11);
   const p = alle.map(([la, lo]) => px(la, lo, z));
   const mx = (Math.max(...p.map(q => q[0])) + Math.min(...p.map(q => q[0]))) / 2;
   const my = (Math.max(...p.map(q => q[1])) + Math.min(...p.map(q => q[1]))) / 2;
@@ -2009,7 +2012,7 @@ async function statischeKarte() {
     }
     const auf = ([la, lo]) => { const q = px(la, lo, z); return [q[0] - ox, q[1] - oy]; };
     g.lineJoin = "round"; g.lineCap = "round";
-    for (const t of daten.tracks) {
+    for (const t of tracks) {
       g.strokeStyle = "#2f8aa0"; g.lineWidth = 5; g.beginPath();
       t.punkte.forEach((q, i) => { const [x, y] = auf(q); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke();
@@ -2033,8 +2036,10 @@ async function statischeKarte() {
   let url;
   try { url = await zeichne(true); }
   catch { url = await zeichne(false); }   // Kacheln nicht freigegeben -> ohne Hintergrund
-  karteCache = { schluessel, bild: { url, w: B, h: H } };
-  return karteCache.bild;
+  const bild = { url, w: B, h: H };
+  if (opt.punkte) { karteCacheMehr.set(schluessel, bild); return bild; }
+  karteCache = { schluessel, bild };
+  return bild;
 }
 
 // ── Bericht (Vorschau = Druck) ───────────────────────────────────────
@@ -2163,142 +2168,276 @@ const pdfText = t => (t || "")
   .replace(/[^\n\x20-\x7E\xA0-\xFF–—…€•]/g, "")
   .replace(/[ \t]+\n/g, "\n").trim();
 
+// ═════════════════════════════════════════════════════════════════════
+// 12.10.2026: PDF-Reisebuch im Magazin-Stil
+//   Titelseite mit grossem Titelfoto · Routenseite mit Karte und
+//   Reiseverlauf · je Tag ein Tageskopf (grosse Tagnummer, Thema, Route,
+//   Mini-Karte, Einleitung) · Sub-Themen mit Nummer und Fotoraster
+// ═════════════════════════════════════════════════════════════════════
+const DRUCK = {
+  tinte: [35, 38, 44], grau: [122, 116, 102], gold: [181, 131, 42], goldHell: [212, 162, 78],
+  linie: [228, 222, 210], papier: [251, 250, 247], nacht: [16, 20, 27], weiss: [255, 255, 255],
+};
+// Foto passend zuschneiden (wie "cover"), Auflösung ca. 190 dpi
+async function bildAusschnitt(id, wmm, hmm) {
+  const rec = await idb.get("fotos", id);
+  if (!rec) return null;
+  let bild;
+  try { bild = await createImageBitmap(rec.voll); } catch { bild = await ladeBild(rec.voll).catch(() => null); }
+  if (!bild) return null;
+  const dpmm = 7.5;
+  const W = Math.round(wmm * dpmm), H = Math.round(hmm * dpmm);
+  const f = Math.max(W / bild.width, H / bild.height);
+  const sw = W / f, sh = H / f;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  c.getContext("2d").drawImage(bild, (bild.width - sw) / 2, (bild.height - sh) / 2, sw, sh, 0, 0, W, H);
+  return c.toDataURL("image/jpeg", 0.84);
+}
+
 async function erstellePdf(tage, mitDeckblatt, fortschritt) {
   await ladeJsPdf();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
-  const W = 210, H = 297, R = 16, B = W - 2 * R, UNTEN = H - 20;
+  const W = 210, H = 297, R = 18, B = W - 2 * R, UNTEN = H - 22;
+  const D = DRUCK;
   let y = R;
   let leer = true;
+  const farbe = rgb => doc.setTextColor(...rgb);
+  const schrift = (familie, stil, groesse, rgb) => { doc.setFont(familie, stil); doc.setFontSize(groesse); if (rgb) farbe(rgb); };
   const neueSeite = () => { doc.addPage(); y = R; };
-  const platz = h => { if (y + h > UNTEN) neueSeite(); };
-  const farbe = (rgb) => doc.setTextColor(...rgb);
-  const TINTE = [35, 38, 44], GRAU = [122, 116, 102];
+  const platz = h => { if (y + h > UNTEN) { neueSeite(); return true; } return false; };
+  const k = kennzahlen();
+  const nummern = subNummern();
+  const seitenTag = {};   // Seite -> Tag (für die Fusszeile)
 
+  // ── Titelseite ────────────────────────────────────────────────────
   if (mitDeckblatt) {
-    const k = kennzahlen();
-    doc.setFont("helvetica", "bold"); doc.setFontSize(28); farbe(TINTE);
-    const zeilen = doc.splitTextToSize(pdfText(reiseTitel()), B);
-    doc.text(zeilen, R, y + 12);
-    y += 12 + zeilen.length * 11;
-    if (daten.reise.untertitel) {
-      doc.setFont("times", "italic"); doc.setFontSize(15); farbe(GRAU);
-      const u = doc.splitTextToSize(pdfText(daten.reise.untertitel), B);
-      doc.text(u, R, y + 2);
-      y += u.length * 7 + 2;
+    fortschritt && fortschritt("Titelseite …");
+    const ersteFoto = eintraegeSortiert().flatMap(e => e.fotos)[0];
+    const fotoH = 185;
+    const titelbild = ersteFoto ? await bildAusschnitt(ersteFoto, W, fotoH) : null;
+    if (titelbild) doc.addImage(titelbild, "JPEG", 0, 0, W, fotoH);
+    else { doc.setFillColor(...D.nacht); doc.rect(0, 0, W, fotoH, "F"); }
+    // Verlauf nach unten, damit der Titel lesbar bleibt
+    for (let i = 0; i < 24; i++) {
+      doc.setGState(new doc.GState({ opacity: 0.03 * i }));
+      doc.setFillColor(...D.nacht);
+      doc.rect(0, fotoH - 80 + i * (80 / 24), W, 80 / 24 + 0.2, "F");
     }
-    const fakten = [];
-    if (daten.reise.start && daten.reise.ende) fakten.push(`${datumLang(daten.reise.start)} – ${datumLang(daten.reise.ende)}`);
-    fakten.push(`${k.tage} Tage`, `${k.stationen} Stationen`, `${k.fotos} Fotos`);
-    if (k.kmRoute + k.kmTracks > 0) fakten.push(`${formatZahlCH(k.kmRoute + k.kmTracks)} km`);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(10); farbe(GRAU);
-    doc.text(pdfText(fakten.join("   ·   ")), R, y + 6);
-    y += 14;
-    fortschritt && fortschritt("Karte wird erstellt …");
-    const bild = await statischeKarte();
-    if (bild) {
-      const h = B * bild.h / bild.w;
-      doc.addImage(bild.url, "JPEG", R, y, B, h);
-      y += h + 4;
-      doc.setFontSize(7.5);
-      doc.text(pdfText(`Karte ${KARTEN_QUELLE}`), R, y + 2);
+    doc.setGState(new doc.GState({ opacity: 1 }));
+    schrift("helvetica", "bold", 9, D.goldHell);
+    doc.setCharSpace(1.2);
+    doc.text("REISETAGEBUCH", R, fotoH - 52);
+    doc.setCharSpace(0);
+    schrift("times", "bold", 38, D.weiss);
+    const titelZ = doc.splitTextToSize(pdfText(reiseTitel()), B);
+    doc.text(titelZ, R, fotoH - 38 + (titelZ.length > 1 ? -14 * (titelZ.length - 1) : 0));
+    if (daten.reise.untertitel) {
+      schrift("times", "italic", 14, [230, 226, 216]);
+      doc.text(doc.splitTextToSize(pdfText(daten.reise.untertitel), B)[0], R, fotoH - 22);
+    }
+    if (daten.reise.start && daten.reise.ende) {
+      schrift("helvetica", "normal", 10, [200, 196, 188]);
+      doc.text(pdfText(`${datumLang(daten.reise.start)} - ${datumLang(daten.reise.ende)}`), R, fotoH - 12);
+    }
+    // Kennzahlen-Band
+    doc.setFillColor(...D.papier); doc.rect(0, fotoH, W, H - fotoH, "F");
+    doc.setFillColor(...D.goldHell); doc.rect(0, fotoH, W, 2.5, "F");
+    const fakten = [[k.tage, "Tage"], [k.stationen, "Stationen"], [formatZahlCH(k.kmRoute + k.kmTracks), "Kilometer"], [k.fotos, "Fotos"]];
+    const spalte = B / fakten.length;
+    fakten.forEach(([wert, text], i) => {
+      const x = R + i * spalte;
+      schrift("times", "bold", 30, D.gold);
+      doc.text(String(wert).replace("'", "'"), x, fotoH + 34);
+      schrift("helvetica", "normal", 9, D.grau);
+      doc.setCharSpace(0.8);
+      doc.text(text.toUpperCase(), x, fotoH + 42);
+      doc.setCharSpace(0);
+    });
+    // Tagesübersicht kurz
+    let ty = fotoH + 62;
+    schrift("helvetica", "bold", 9, D.grau);
+    doc.setCharSpace(0.8); doc.text("REISEVERLAUF", R, ty); doc.setCharSpace(0);
+    ty += 6;
+    for (const datum of tageMitEintraegen()) {
+      if (ty > H - 14) break;
+      const t = themaAm(datum);
+      schrift("helvetica", "bold", 9.5, D.gold);
+      doc.text(pdfText(tagLabel(datum)), R, ty);
+      schrift("helvetica", "normal", 9.5, D.tinte);
+      const zeile = [t && t.titel, tagStrecke(datum).replace("→", "–")].filter(Boolean).join("  ·  ");
+      doc.text(doc.splitTextToSize(pdfText(zeile), B - 48)[0] || "", R + 20, ty);
+      const kmT = tagKm(datum);
+      schrift("helvetica", "normal", 9.5, D.grau);
+      if (kmT >= 1) doc.text(`${formatZahlCH(kmT)} km`, R + B, ty, { align: "right" });
+      ty += 6;
     }
     leer = false;
+
+    // ── Routenseite ──────────────────────────────────────────────────
+    fortschritt && fortschritt("Routenkarte …");
+    const karte = await statischeKarte();
+    if (karte) {
+      neueSeite();
+      schrift("helvetica", "bold", 9, D.gold);
+      doc.setCharSpace(1.2); doc.text("DIE ROUTE", R, y + 4); doc.setCharSpace(0);
+      schrift("times", "bold", 26, D.tinte);
+      doc.text(pdfText(reiseTitel()), R, y + 16);
+      y += 24;
+      const kh = B * karte.h / karte.w;
+      doc.addImage(karte.url, "JPEG", R, y, B, kh);
+      doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, kh);
+      y += kh + 5;
+      schrift("helvetica", "normal", 7.5, D.grau);
+      doc.text(pdfText(`Rote Punkte: Start und Ziel der Tage · Goldene Nummern: Sub-Themen · Karte ${KARTEN_QUELLE}`), R, y);
+      y += 10;
+      // Legende der Nummern
+      schrift("helvetica", "bold", 9, D.grau);
+      doc.setCharSpace(0.8); doc.text("STATIONEN", R, y); doc.setCharSpace(0);
+      y += 6;
+      const subs = eintraegeSortiert().filter(e => !istThema(e));
+      const halb = (B - 8) / 2;
+      subs.forEach((e, i) => {
+        const spalteX = R + (i % 2) * (halb + 8);
+        if (i % 2 === 0 && i > 0) y += 6;
+        if (y > UNTEN) neueSeite();
+        doc.setFillColor(...D.goldHell); doc.circle(spalteX + 2.2, y - 1.3, 2.3, "F");
+        schrift("helvetica", "bold", 7, D.weiss);
+        doc.text(String(nummern.get(e.id)), spalteX + 2.2, y - 0.3, { align: "center" });
+        schrift("helvetica", "normal", 9, D.tinte);
+        doc.text(doc.splitTextToSize(pdfText(`${e.titel || e.ort || "Sub-Thema"}${e.ort && e.titel ? ` (${e.ort})` : ""}`), halb - 8)[0], spalteX + 7, y);
+      });
+    }
   }
 
+  // ── Tage ──────────────────────────────────────────────────────────
   for (let ti = 0; ti < tage.length; ti++) {
     const datum = tage[ti];
     fortschritt && fortschritt(`Tag ${ti + 1} von ${tage.length} …`);
     if (!leer) neueSeite();
     leer = false;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); farbe(GRAU);
-    doc.setCharSpace(0.4);
+    seitenTag[doc.getNumberOfPages()] = tagLabel(datum);
+    const thema = themaAm(datum);
+    const subs = eintraegeAm(datum).filter(e => !istThema(e));
     const kmTag = tagKm(datum);
-    doc.text(pdfText(`${tagLabel(datum)}  ·  ${datumLang(datum)}${kmTag >= 1 ? `  ·  ${formatZahlCH(kmTag)} km` : ""}`.toUpperCase()), R, y + 3);
-    doc.setCharSpace(0);
-    y += 8;
 
-    const eintraege = eintraegeAm(datum);
-    const nummern = subNummern();
-    for (let ei = 0; ei < eintraege.length; ei++) {
-      const e = eintraege[ei];
-      if (ei > 0) {
-        platz(12);
-        doc.setDrawColor(227, 222, 211); doc.setLineWidth(0.3);
-        doc.line(R, y + 3, R + B, y + 3);
-        y += 8;
-      }
-      if (e.titel && istThema(e)) {   // Haupteintrag
-        doc.setFont("helvetica", "bold"); doc.setFontSize(17); farbe(TINTE);
-        const z = doc.splitTextToSize(pdfText(e.titel), B);
-        platz(z.length * 7.2 + 2);
-        doc.text(z, R, y + 6);
-        y += z.length * 7.2 + 1;
-      } else if (!istThema(e)) {   // Sub-Thema mit Nummer
-        doc.setFont("helvetica", "bold"); doc.setFontSize(13); farbe(TINTE);
-        const z = doc.splitTextToSize(pdfText(`${nummern.get(e.id)} · ${e.titel || e.ort || "Sub-Thema"}`), B - 5);
-        platz(z.length * 5.8 + 2);
-        doc.setFillColor(212, 162, 78);
-        doc.rect(R, y + 1.4, 1.6, 5.2, "F");
-        doc.text(z, R + 5, y + 5.5);
-        y += z.length * 5.8 + 1;
-      }
-      const ortText = istThema(e) ? tagStrecke(datum) : e.ort;
-      if (ortText) {
-        doc.setFont("helvetica", "normal"); doc.setFontSize(10); farbe(GRAU);
-        platz(6);
-        doc.text(pdfText(ortText.replace("→", "-")), R + (istThema(e) ? 0 : 5), y + 4);
-        y += 6;
-      }
-      if (e.text) {
-        doc.setFont("times", "normal"); doc.setFontSize(11.5); farbe(TINTE);
-        y += 2;
-        for (const absatz of pdfText(e.text).split("\n")) {
-          const zeilen = absatz ? doc.splitTextToSize(absatz, B) : [""];
-          for (const zeile of zeilen) {
-            platz(5.3);
-            doc.text(zeile, R, y + 4.3);
-            y += 5.3;
-          }
-        }
-      }
-      // Fotos: je zwei nebeneinander, ein einzelnes zentriert
-      const recs = (await Promise.all(e.fotos.map(id => idb.get("fotos", id)))).filter(Boolean);
-      if (recs.length) y += 4;
-      for (let i = 0; i < recs.length; i += 2) {
-        const reihe = recs.slice(i, i + 2);
-        const urls = await Promise.all(reihe.map(r => blobZuDataUrl(r.klein)));
-        if (reihe.length === 2) {
-          const sw = (B - 5) / 2;
-          const masse = reihe.map(r => {
-            let h = sw * r.h / r.w, w = sw;
-            if (h > 78) { h = 78; w = h * r.w / r.h; }
-            return { w, h };
-          });
-          const hmax = Math.max(...masse.map(m => m.h));
-          platz(hmax + 4);
-          masse.forEach((m, j) => doc.addImage(urls[j], "JPEG", R + j * (sw + 5) + (sw - m.w) / 2, y, m.w, m.h));
-          y += hmax + 5;
-        } else {
-          const r = reihe[0];
-          let w = Math.min(130, B), h = w * r.h / r.w;
-          if (h > 105) { h = 105; w = h * r.w / r.h; }
-          platz(h + 4);
-          doc.addImage(urls[0], "JPEG", R + (B - w) / 2, y, w, h);
-          y += h + 5;
+    // Tageskopf: grosse Tagnummer links, Thema und Route, Mini-Karte rechts
+    const tagesPunkte_ = tagesPunkte(datum, nummern);
+    const mini = tagesPunkte_.length ? await statischeKarte({ punkte: tagesPunkte_, B: 640, H: 480, rand: 60 }) : null;
+    const textB = mini ? B - 62 : B;
+    doc.setFillColor(...D.goldHell); doc.rect(R, y, 14, 1.4, "F");
+    y += 9;
+    const n = tagNummer(datum);
+    schrift("helvetica", "bold", 8.5, D.grau);
+    doc.setCharSpace(1); doc.text(n ? "TAG" : "VOR DER REISE", R, y); doc.setCharSpace(0);
+    if (n) { schrift("times", "bold", 40, D.gold); doc.text(String(n), R, y + 14); }
+    schrift("helvetica", "normal", 9, D.grau);
+    doc.text(pdfText(datumLang(datum)).toUpperCase(), R + 24, y);
+    schrift("times", "bold", 21, D.tinte);
+    const thZ = doc.splitTextToSize(pdfText((thema && thema.titel) || tagLabel(datum)), textB - 24);
+    doc.text(thZ, R + 24, y + 9);
+    let ky = y + 9 + (thZ.length - 1) * 8.5;
+    const strecke = tagStrecke(datum);
+    if (strecke || kmTag >= 1) {
+      schrift("helvetica", "bold", 10, D.gold);
+      doc.text(pdfText(`${strecke.replace("→", "–")}${kmTag >= 1 ? `   ·   ${formatZahlCH(kmTag)} km` : ""}`), R + 24, ky + 8);
+      ky += 8;
+    }
+    if (mini) {
+      const mw = 58, mh = mw * mini.h / mini.w;
+      doc.addImage(mini.url, "JPEG", R + B - mw, y - 6, mw, mh);
+      doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R + B - mw, y - 6, mw, mh);
+      y = Math.max(ky + 8, y - 6 + mh + 6);
+    } else {
+      y = Math.max(ky + 8, y + 20);
+    }
+    // Einleitung (Text des Haupteintrags) kursiv
+    if (thema && thema.text) {
+      schrift("times", "italic", 12, D.tinte);
+      for (const absatz of pdfText(thema.text).split("\n")) {
+        for (const zeile of (absatz ? doc.splitTextToSize(absatz, B) : [""])) {
+          platz(5.8); doc.text(zeile, R, y + 4.5); y += 5.8;
         }
       }
       y += 3;
     }
+
+    // Sub-Themen
+    for (const e of subs) {
+      const nr = nummern.get(e.id);
+      // Fotolayout planen: Zeilen aus Feldern [x, b, h]
+      const L = 3.5, n = e.fotos.length;
+      const zeilen = [];
+      if (n === 1) zeilen.push({ h: B * 0.56, felder: [[0, B]] });
+      else if (n === 2) zeilen.push({ h: 64, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
+      else if (n === 3) zeilen.push({ h: 96, drei: true });
+      else if (n === 4) {
+        zeilen.push({ h: 58, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
+        zeilen.push({ h: 58, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
+      } else {
+        const d = (B - 2 * L) / 3;
+        for (let j = 0; j < n; j += 3) zeilen.push({ h: 44, felder: [[0, d], [d + L, d], [2 * (d + L), d]].slice(0, n - j) });
+      }
+      // Kopf + Text + erste Fotozeile zusammenhalten
+      schrift("times", "normal", 11.5);
+      const textZ = e.text ? pdfText(e.text).split("\n").flatMap(a => a ? doc.splitTextToSize(a, B) : [""]) : [];
+      const kopfH = 26 + (e.ort && e.titel ? 5 : 0) + textZ.length * 5.4 + (zeilen[0] ? zeilen[0].h + 4 : 0);
+      if (y + kopfH > UNTEN && kopfH < UNTEN - R) neueSeite(); else y += 5;
+      if (y > R) { doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.line(R, y, R + B, y); }
+      y += 8;
+      doc.setFillColor(...D.goldHell); doc.circle(R + 4.2, y - 1.6, 4.2, "F");
+      schrift("helvetica", "bold", 10, D.weiss);
+      doc.text(String(nr), R + 4.2, y - 0.1, { align: "center" });
+      schrift("helvetica", "bold", 14, D.tinte);
+      const stZ = doc.splitTextToSize(pdfText(e.titel || e.ort || "Sub-Thema"), B - 12);
+      doc.text(stZ, R + 12, y);
+      y += (stZ.length - 1) * 6;
+      if (e.ort && e.titel) {
+        schrift("helvetica", "normal", 9, D.grau);
+        doc.text(pdfText(e.ort), R + 12, y + 5);
+        y += 5;
+      }
+      y += 4;
+      if (textZ.length) {
+        schrift("times", "normal", 11.5, D.tinte);
+        for (const zeile of textZ) { platz(5.4); doc.text(zeile, R, y + 4.3); y += 5.4; }
+        y += 2;
+      }
+      // Fotos
+      let fi = 0;
+      for (const z of zeilen) {
+        platz(z.h + 4);
+        y += 1;
+        if (z.drei) {   // grosses Foto links, zwei kleine rechts übereinander
+          const gb = (B - L) * 0.64, kb = B - L - gb, kh = (z.h - L) / 2;
+          const [u0, u1, u2] = await Promise.all([bildAusschnitt(e.fotos[0], gb, z.h), bildAusschnitt(e.fotos[1], kb, kh), bildAusschnitt(e.fotos[2], kb, kh)]);
+          if (u0) doc.addImage(u0, "JPEG", R, y, gb, z.h);
+          if (u1) doc.addImage(u1, "JPEG", R + gb + L, y, kb, kh);
+          if (u2) doc.addImage(u2, "JPEG", R + gb + L, y + kh + L, kb, kh);
+          fi += 3;
+        } else {
+          const urls = await Promise.all(z.felder.map((f, j) => bildAusschnitt(e.fotos[fi + j], f[1], z.h)));
+          z.felder.forEach((f, j) => { if (urls[j]) doc.addImage(urls[j], "JPEG", R + f[0], y, f[1], z.h); });
+          fi += z.felder.length;
+        }
+        y += z.h + L - 1;
+      }
+    }
   }
 
-  // Fusszeile mit Seitenzahl
-  const n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) {
+  // Fusszeile (nicht auf der Titelseite)
+  const nSeiten = doc.getNumberOfPages();
+  let aktTag = "";
+  for (let i = 1; i <= nSeiten; i++) {
+    if (seitenTag[i]) aktTag = seitenTag[i];
+    if (mitDeckblatt && i === 1) continue;
     doc.setPage(i);
-    doc.setFont("helvetica", "normal"); doc.setFontSize(8); farbe(GRAU);
-    doc.text(pdfText(reiseTitel()), R, H - 10);
-    doc.text(`${i} / ${n}`, W - R, H - 10, { align: "right" });
+    doc.setDrawColor(...D.goldHell); doc.setLineWidth(0.4);
+    doc.line(R, H - 14, R + 10, H - 14);
+    schrift("helvetica", "normal", 8, D.grau);
+    doc.text(pdfText(reiseTitel()), R + 13, H - 13);
+    doc.text(pdfText(`${aktTag ? aktTag + "  ·  " : ""}${i}`), W - R, H - 13, { align: "right" });
   }
   return doc.output("blob");
 }
