@@ -426,6 +426,22 @@
   .foto-raster { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .foto-kachel { position: relative; aspect-ratio: 1; max-width: 100%; }
   .foto-kachel img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: var(--bg-panel-2); display: block; }
+  .titel-schalter {
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    border: none;
+    border-radius: 10px;
+    padding: 3px 7px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(16, 20, 27, 0.8);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .titel-schalter.aktiv { background: var(--accent); color: var(--bg); }
+  .foto-streifen .ist-titel { outline: 2px solid var(--accent); outline-offset: -2px; }
   .foto-kachel .weg {
     position: absolute;
     top: 4px;
@@ -533,10 +549,13 @@
     padding: 1px 5px;
   }
   .karte-marker.ziel { background: var(--bg-panel-2); font-size: 13px; border-color: var(--accent); }
+  .karte-marker-huelle { width: 40px; height: 26px; display: flex; justify-content: center; }
   .karte-marker {
-    width: 26px;
+    min-width: 26px;
     height: 26px;
-    border-radius: 50%;
+    padding: 0 6px;
+    border-radius: 13px;
+    white-space: nowrap;
     background: var(--accent);
     color: var(--bg);
     font-size: 12px;
@@ -890,7 +909,10 @@
         <label>Start <input type="date" id="rStart"></label>
         <label>Ende <input type="date" id="rEnde"></label>
       </div>
-      <p class="hinweis">Der Start bestimmt die Tagnummern (Tag 1, Tag 2 …).</p>
+      <label>Speicherort (erscheint in der PDF-Fusszeile)
+        <input type="text" id="rSpeicherort" maxlength="120" placeholder="OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch" autocomplete="off">
+      </label>
+      <p class="hinweis">Der Start bestimmt die Tagnummern (Tag 1, Tag 2 …), die Sub-Themen werden je Tag nummeriert (3.1, 3.2 …).</p>
     </div>
 
     <h2>Bericht</h2>
@@ -963,7 +985,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.10.2026 · 20:15";
+const APP_VERSION = "12.10.2026 · 21:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1057,6 +1079,7 @@ function leereDaten() {
 function normalisiere(roh) {
   const d = Object.assign(leereDaten(), roh || {});
   d.reise = Object.assign(leereDaten().reise, d.reise || {});
+  if (!d.reise.speicherort) d.reise.speicherort = "OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch";
   d.eintraege = Array.isArray(d.eintraege) ? d.eintraege : [];
   d.eintraege.forEach(e => { e.fotos = Array.isArray(e.fotos) ? e.fotos : []; });
   // 11.10.2026: Art des Eintrags ausdrücklich speichern ("thema" = Haupteintrag
@@ -1070,6 +1093,7 @@ function normalisiere(roh) {
   });
   d.tracks = Array.isArray(d.tracks) ? d.tracks : [];
   d.meta = Object.assign({ geaendert: "", letzteSicherung: "" }, d.meta || {});
+  d.titelFotos = Array.isArray(d.titelFotos) ? d.titelFotos : [];   // Fotos für die Titelseite
   return d;
 }
 let daten = leereDaten();
@@ -1097,11 +1121,15 @@ function eintraegeSortiert() {
     || (istThema(b) - istThema(a)) || (a.erstellt || 0) - (b.erstellt || 0));
 }
 function themaAm(datum) { return daten.eintraege.find(e => e.datum === datum && istThema(e)); }
-// Laufende Nummer der Sub-Themen über die ganze Reise (1, 2, 3 …) –
-// dieselbe Nummer steht im Tagebuch, auf der Karte und im Bericht.
+// 12.10.2026: Nummer der Sub-Themen = Tag.Sub, z.B. 3.1, 3.2 (Tag 3) –
+// dieselbe Nummer steht im Tagebuch, auf der Karte, im PDF und in WhatsApp.
 function subNummern() {
   const m = new Map();
-  eintraegeSortiert().filter(e => !istThema(e)).forEach((e, i) => m.set(e.id, i + 1));
+  const zaehler = {};
+  eintraegeSortiert().filter(e => !istThema(e)).forEach(e => {
+    zaehler[e.datum] = (zaehler[e.datum] || 0) + 1;
+    m.set(e.id, `${tagNummer(e.datum) || 0}.${zaehler[e.datum]}`);
+  });
   return m;
 }
 function tageMitEintraegen() { return [...new Set(eintraegeSortiert().map(e => e.datum))]; }
@@ -1257,7 +1285,7 @@ function renderAlles() {
   renderTagebuch();
   renderTracks();
   renderSicherungsInfo();
-  for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende]]) {
+  for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende], ["rSpeicherort", r.speicherort]]) {
     const el = document.getElementById(id);
     if (document.activeElement !== el) el.value = wert || "";
   }
@@ -1363,6 +1391,7 @@ function renderTagebuch() {
         streifen.className = "foto-streifen";
         e.fotos.forEach((id, i) => {
           const img = fotoImg(id);
+          if (daten.titelFotos.includes(id)) { img.classList.add("ist-titel"); img.title = "Titelfoto"; }
           img.addEventListener("click", ev => { if (auswahlModus) return; ev.stopPropagation(); oeffneLightbox(e.fotos, i); });
           streifen.appendChild(img);
         });
@@ -1412,7 +1441,7 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, art: "auto", fotos: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], titel: new Set(), neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
 // Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
@@ -1461,6 +1490,7 @@ function neuerEintragAm(datum) {
 
 function formularLeeren() {
   form.id = null;
+  form.titel = new Set();
   form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
@@ -1490,6 +1520,7 @@ function bearbeiteEintrag(id) {
     form.id = e.id;
     form.art = e.art;
     form.fotos = [...e.fotos];
+    form.titel = new Set(e.fotos.filter(id => daten.titelFotos.includes(id)));
     form.neu = new Set();
     form.entfernt = new Set();
     form.lat = Number.isFinite(e.lat) ? e.lat : null;
@@ -1533,11 +1564,22 @@ function renderFormFotos() {
     weg.setAttribute("aria-label", "Foto entfernen");
     weg.addEventListener("click", async () => {
       form.fotos = form.fotos.filter(x => x !== id);
+      form.titel.delete(id);
       if (form.neu.has(id)) { form.neu.delete(id); await loescheFoto(id); }
       else form.entfernt.add(id);
       renderFormFotos();
     });
-    kachel.append(img, weg);
+    // ★ = Titelfoto für die Titelseite des PDF (mehrere werden zur Collage)
+    const stern = document.createElement("button");
+    stern.type = "button";
+    stern.className = "titel-schalter" + (form.titel.has(id) ? " aktiv" : "");
+    stern.textContent = form.titel.has(id) ? "★ Titel" : "☆ Normal";
+    stern.setAttribute("aria-pressed", form.titel.has(id));
+    stern.addEventListener("click", () => {
+      form.titel.has(id) ? form.titel.delete(id) : form.titel.add(id);
+      renderFormFotos();
+    });
+    kachel.append(img, weg, stern);
     raster.appendChild(kachel);
   });
   const hinzu = document.createElement("label");
@@ -1725,6 +1767,10 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
   if (bisher) Object.assign(bisher, eintrag); else daten.eintraege.push(eintrag);
+  // Titelfotos dieses Eintrags aktualisieren
+  const alleDiese = new Set([...(bisher ? bisher.fotos : []), ...form.fotos, ...form.entfernt]);
+  daten.titelFotos = daten.titelFotos.filter(id => !alleDiese.has(id))
+    .concat(eintrag.fotos.filter(id => form.titel.has(id)));
   for (const id of form.entfernt) await loescheFoto(id);
   form.neu = new Set();
   form.entfernt = new Set();
@@ -1741,6 +1787,7 @@ zweistufig(feld("eintragLoeschen"), "Wirklich löschen? Nochmals tippen", async 
   const e = daten.eintraege.find(x => x.id === form.id);
   if (e) {
     for (const id of new Set([...e.fotos, ...form.fotos])) await loescheFoto(id);
+    daten.titelFotos = daten.titelFotos.filter(id => !e.fotos.includes(id));
     daten.eintraege = daten.eintraege.filter(x => x.id !== e.id);
   }
   await formularVerwerfen();
@@ -1826,19 +1873,19 @@ function zeichneKarte() {
   }
   subMarker = [];
   for (const e of st.filter(p => !p.start && !p.ziel)) {
-    const icon = L.divIcon({ className: "", html: `<div class="karte-marker">${e.nr}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+    const icon = L.divIcon({ className: "", html: `<div class="karte-marker-huelle"><div class="karte-marker">${e.nr}</div></div>`, iconSize: [40, 26], iconAnchor: [20, 13] });
     const inhalt = document.createElement("div");
     const b = document.createElement("strong");
     b.textContent = `Nr. ${e.nr} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
-    const nummer = L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 + e.nr }).bindPopup(inhalt).addTo(karteEbene);
+    const nummer = L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 + subMarker.length }).bindPopup(inhalt).addTo(karteEbene);
     grenzen.push([e.lat, e.lon]);
     // Mini-Foto direkt über seinem Nummernpunkt, mit derselben Nummer.
     // Antippen öffnet alle Fotos dieses Sub-Themas.
     let foto = null, html = "";
     if (e.fotos && e.fotos.length) {
       html = `<div class="karte-foto-huelle"><div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}"><span class="foto-nr">${e.nr}</span>${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length} Fotos</span>` : ""}</div></div>`;
-      foto = L.marker([e.lat, e.lon], { icon: L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [32, 87] }), zIndexOffset: 500 + e.nr })
+      foto = L.marker([e.lat, e.lon], { icon: L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [32, 87] }), zIndexOffset: 500 + subMarker.length })
         .on("click", () => oeffneLightbox(e.fotos, 0))
         .on("add", () => { const el = foto.getElement(); if (el) ladeBilderIn(el); });
       foto.addTo(fotoEbene);
@@ -1871,7 +1918,7 @@ function ordneSubMarker() {
       const dx = n > 1 ? (i - (n - 1) / 2) * ABSTAND : 0;
       const ll = n > 1 ? g.ll : [s.p.lat, s.p.lon];
       s.nummer.setLatLng(ll);
-      s.nummer.setIcon(L.divIcon({ className: "", html: `<div class="karte-marker">${s.p.nr}</div>`, iconSize: [26, 26], iconAnchor: [13 - dx, 13] }));
+      s.nummer.setIcon(L.divIcon({ className: "", html: `<div class="karte-marker-huelle"><div class="karte-marker">${s.p.nr}</div></div>`, iconSize: [40, 26], iconAnchor: [20 - dx, 13] }));
       if (s.foto) {
         s.foto.setLatLng(ll);
         s.foto.setIcon(L.divIcon({ className: "", html: s.html, iconSize: [64, 64], iconAnchor: [32 - dx, 87] }));
@@ -2029,7 +2076,11 @@ async function statischeKarte(opt = {}) {
       g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
       g.fillStyle = "#1a1d22"; g.font = "bold 17px -apple-system, Segoe UI, Roboto, sans-serif";
       g.textAlign = "center"; g.textBaseline = "middle";
-      if (!e.ziel && !e.start) g.fillText(String(e.nr), x, y + 1);
+      if (!e.ziel && !e.start) {
+        const t = String(e.nr);
+        g.font = `bold ${t.length > 4 ? 11 : t.length > 3 ? 13 : 15}px -apple-system, Segoe UI, Roboto, sans-serif`;
+        g.fillText(t, x, y + 1);
+      }
     });
     return c.toDataURL("image/jpeg", 0.86);
   };
@@ -2144,7 +2195,7 @@ document.getElementById("druckBtn").addEventListener("click", async () => {
   window.print();
 });
 
-for (const [id, schluessel] of [["rTitel", "titel"], ["rUntertitel", "untertitel"], ["rStart", "start"], ["rEnde", "ende"]]) {
+for (const [id, schluessel] of [["rTitel", "titel"], ["rUntertitel", "untertitel"], ["rStart", "start"], ["rEnde", "ende"], ["rSpeicherort", "speicherort"]]) {
   document.getElementById(id).addEventListener("change", (ev) => {
     daten.reise[schluessel] = ev.target.value.trim();
     speichere();
@@ -2195,7 +2246,10 @@ async function bildAusschnitt(id, wmm, hmm) {
   return c.toDataURL("image/jpeg", 0.84);
 }
 
-async function erstellePdf(tage, mitDeckblatt, fortschritt) {
+// Dateiname des Reisebuchs bleibt immer gleich -> im OneDrive "Ersetzen"
+function reisebuchName() { return `${dateiName(reiseTitel())}-reisebuch`; }
+
+async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
   await ladeJsPdf();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
@@ -2204,21 +2258,44 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
   let y = R;
   let leer = true;
   const farbe = rgb => doc.setTextColor(...rgb);
-  const schrift = (familie, stil, groesse, rgb) => { doc.setFont(familie, stil); doc.setFontSize(groesse); if (rgb) farbe(rgb); };
+  // Schrift: durchgehend Arial (Helvetica), abgestuft über Grösse und Stärke
+  const schrift = (stil, groesse, rgb) => { doc.setFont("helvetica", stil); doc.setFontSize(groesse); if (rgb) farbe(rgb); };
   const neueSeite = () => { doc.addPage(); y = R; };
   const platz = h => { if (y + h > UNTEN) { neueSeite(); return true; } return false; };
   const k = kennzahlen();
   const nummern = subNummern();
-  const seitenTag = {};   // Seite -> Tag (für die Fusszeile)
+  // Nummern-Pille (z.B. "3.1"), gibt die Breite zurück
+  const pille = (text, x, yBasis, gross = true) => {
+    schrift("bold", gross ? 9.5 : 7.5, D.weiss);
+    const w = Math.max(gross ? 8.4 : 5.6, doc.getTextWidth(text) + (gross ? 4 : 2.8));
+    const h = gross ? 6.4 : 4.6;
+    doc.setFillColor(...D.goldHell);
+    doc.roundedRect(x, yBasis - h + (gross ? 1.6 : 1.1), w, h, h / 2, h / 2, "F");
+    doc.text(text, x + w / 2, yBasis, { align: "center" });
+    return w;
+  };
 
   // ── Titelseite ────────────────────────────────────────────────────
   if (mitDeckblatt) {
     fortschritt && fortschritt("Titelseite …");
-    const ersteFoto = eintraegeSortiert().flatMap(e => e.fotos)[0];
-    const fotoH = 185;
-    const titelbild = ersteFoto ? await bildAusschnitt(ersteFoto, W, fotoH) : null;
-    if (titelbild) doc.addImage(titelbild, "JPEG", 0, 0, W, fotoH);
-    else { doc.setFillColor(...D.nacht); doc.rect(0, 0, W, fotoH, "F"); }
+    const fotoH = 185, L = 1.5;
+    // Titelfotos (★ im Editor); ohne Auswahl das erste Foto der Reise
+    const alleFotos = new Set(daten.eintraege.flatMap(e => e.fotos));
+    let titel = daten.titelFotos.filter(id => alleFotos.has(id)).slice(0, 6);
+    if (!titel.length) titel = eintraegeSortiert().flatMap(e => e.fotos).slice(0, 1);
+    const n = titel.length;
+    let felder = [];
+    if (n === 1) felder = [[0, 0, W, fotoH]];
+    else if (n === 2) felder = [[0, 0, (W - L) / 2, fotoH], [(W + L) / 2, 0, (W - L) / 2, fotoH]];
+    else if (n === 3) { const gb = W * 0.62; felder = [[0, 0, gb, fotoH], [gb + L, 0, W - gb - L, (fotoH - L) / 2], [gb + L, (fotoH + L) / 2, W - gb - L, (fotoH - L) / 2]]; }
+    else if (n === 4) { const hb = (W - L) / 2, hh = (fotoH - L) / 2; felder = [[0, 0, hb, hh], [hb + L, 0, hb, hh], [0, hh + L, hb, hh], [hb + L, hh + L, hb, hh]]; }
+    else if (n >= 5) { const db = (W - 2 * L) / 3, hh = (fotoH - L) / 2; felder = [0, 1, 2, 3, 4, 5].slice(0, n).map(i => [(i % 3) * (db + L), Math.floor(i / 3) * (hh + L), db, hh]); if (n === 5) felder[4][2] = W - felder[4][0]; }
+    doc.setFillColor(...D.nacht); doc.rect(0, 0, W, fotoH, "F");
+    for (let i = 0; i < n; i++) {
+      const f = felder[i];
+      const url = await bildAusschnitt(titel[i], f[2], f[3]);
+      if (url) doc.addImage(url, "JPEG", f[0], f[1], f[2], f[3]);
+    }
     // Verlauf nach unten, damit der Titel lesbar bleibt
     for (let i = 0; i < 24; i++) {
       doc.setGState(new doc.GState({ opacity: 0.03 * i }));
@@ -2226,88 +2303,80 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
       doc.rect(0, fotoH - 80 + i * (80 / 24), W, 80 / 24 + 0.2, "F");
     }
     doc.setGState(new doc.GState({ opacity: 1 }));
-    schrift("helvetica", "bold", 9, D.goldHell);
-    doc.setCharSpace(1.2);
-    doc.text("REISETAGEBUCH", R, fotoH - 52);
-    doc.setCharSpace(0);
-    schrift("times", "bold", 38, D.weiss);
+    schrift("bold", 9, D.goldHell);
+    doc.setCharSpace(1.2); doc.text("REISETAGEBUCH", R, fotoH - 52); doc.setCharSpace(0);
+    schrift("bold", 34, D.weiss);
     const titelZ = doc.splitTextToSize(pdfText(reiseTitel()), B);
-    doc.text(titelZ, R, fotoH - 38 + (titelZ.length > 1 ? -14 * (titelZ.length - 1) : 0));
+    doc.text(titelZ, R, fotoH - 38 + (titelZ.length > 1 ? -13 * (titelZ.length - 1) : 0));
     if (daten.reise.untertitel) {
-      schrift("times", "italic", 14, [230, 226, 216]);
+      schrift("normal", 13, [230, 226, 216]);
       doc.text(doc.splitTextToSize(pdfText(daten.reise.untertitel), B)[0], R, fotoH - 22);
     }
     if (daten.reise.start && daten.reise.ende) {
-      schrift("helvetica", "normal", 10, [200, 196, 188]);
-      doc.text(pdfText(`${datumLang(daten.reise.start)} - ${datumLang(daten.reise.ende)}`), R, fotoH - 12);
+      schrift("normal", 10, [200, 196, 188]);
+      doc.text(pdfText(`${datumLang(daten.reise.start)} – ${datumLang(daten.reise.ende)}`), R, fotoH - 12);
     }
-    // Kennzahlen-Band
     doc.setFillColor(...D.papier); doc.rect(0, fotoH, W, H - fotoH, "F");
     doc.setFillColor(...D.goldHell); doc.rect(0, fotoH, W, 2.5, "F");
     const fakten = [[k.tage, "Tage"], [k.stationen, "Stationen"], [formatZahlCH(k.kmRoute + k.kmTracks), "Kilometer"], [k.fotos, "Fotos"]];
     const spalte = B / fakten.length;
     fakten.forEach(([wert, text], i) => {
       const x = R + i * spalte;
-      schrift("times", "bold", 30, D.gold);
-      doc.text(String(wert).replace("'", "'"), x, fotoH + 34);
-      schrift("helvetica", "normal", 9, D.grau);
-      doc.setCharSpace(0.8);
-      doc.text(text.toUpperCase(), x, fotoH + 42);
-      doc.setCharSpace(0);
+      schrift("bold", 28, D.gold);
+      doc.text(String(wert), x, fotoH + 38);
+      schrift("normal", 8.5, D.grau);
+      doc.setCharSpace(0.8); doc.text(text.toUpperCase(), x, fotoH + 46); doc.setCharSpace(0);
     });
-    // Tagesübersicht kurz
-    let ty = fotoH + 62;
-    schrift("helvetica", "bold", 9, D.grau);
-    doc.setCharSpace(0.8); doc.text("REISEVERLAUF", R, ty); doc.setCharSpace(0);
-    ty += 6;
-    for (const datum of tageMitEintraegen()) {
-      if (ty > H - 14) break;
-      const t = themaAm(datum);
-      schrift("helvetica", "bold", 9.5, D.gold);
-      doc.text(pdfText(tagLabel(datum)), R, ty);
-      schrift("helvetica", "normal", 9.5, D.tinte);
-      const zeile = [t && t.titel, tagStrecke(datum).replace("→", "–")].filter(Boolean).join("  ·  ");
-      doc.text(doc.splitTextToSize(pdfText(zeile), B - 48)[0] || "", R + 20, ty);
-      const kmT = tagKm(datum);
-      schrift("helvetica", "normal", 9.5, D.grau);
-      if (kmT >= 1) doc.text(`${formatZahlCH(kmT)} km`, R + B, ty, { align: "right" });
-      ty += 6;
-    }
     leer = false;
 
-    // ── Routenseite ──────────────────────────────────────────────────
+    // ── Routenseite: Karte + Reiseverlauf mit Stationen ──────────────
     fortschritt && fortschritt("Routenkarte …");
     const karte = await statischeKarte();
+    neueSeite();
+    schrift("bold", 9, D.gold);
+    doc.setCharSpace(1.2); doc.text("DIE ROUTE", R, y + 4); doc.setCharSpace(0);
+    schrift("bold", 22, D.tinte);
+    doc.text(pdfText(reiseTitel()), R, y + 15);
+    y += 22;
     if (karte) {
-      neueSeite();
-      schrift("helvetica", "bold", 9, D.gold);
-      doc.setCharSpace(1.2); doc.text("DIE ROUTE", R, y + 4); doc.setCharSpace(0);
-      schrift("times", "bold", 26, D.tinte);
-      doc.text(pdfText(reiseTitel()), R, y + 16);
-      y += 24;
       const kh = B * karte.h / karte.w;
       doc.addImage(karte.url, "JPEG", R, y, B, kh);
       doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, kh);
-      y += kh + 5;
-      schrift("helvetica", "normal", 7.5, D.grau);
-      doc.text(pdfText(`Rote Punkte: Start und Ziel der Tage · Goldene Nummern: Sub-Themen · Karte ${KARTEN_QUELLE}`), R, y);
-      y += 10;
-      // Legende der Nummern
-      schrift("helvetica", "bold", 9, D.grau);
-      doc.setCharSpace(0.8); doc.text("STATIONEN", R, y); doc.setCharSpace(0);
-      y += 6;
-      const subs = eintraegeSortiert().filter(e => !istThema(e));
-      const halb = (B - 8) / 2;
-      subs.forEach((e, i) => {
-        const spalteX = R + (i % 2) * (halb + 8);
-        if (i % 2 === 0 && i > 0) y += 6;
-        if (y > UNTEN) neueSeite();
-        doc.setFillColor(...D.goldHell); doc.circle(spalteX + 2.2, y - 1.3, 2.3, "F");
-        schrift("helvetica", "bold", 7, D.weiss);
-        doc.text(String(nummern.get(e.id)), spalteX + 2.2, y - 0.3, { align: "center" });
-        schrift("helvetica", "normal", 9, D.tinte);
-        doc.text(doc.splitTextToSize(pdfText(`${e.titel || e.ort || "Sub-Thema"}${e.ort && e.titel ? ` (${e.ort})` : ""}`), halb - 8)[0], spalteX + 7, y);
-      });
+      y += kh + 4;
+      schrift("normal", 7, D.grau);
+      doc.text(pdfText(`Rot: Start und Ziel der Tage · Gold: Sub-Themen (Tag.Nr) · Karte ${KARTEN_QUELLE}`), R, y);
+      y += 9;
+    }
+    schrift("bold", 9, D.grau);
+    doc.setCharSpace(0.8); doc.text("REISEVERLAUF", R, y); doc.setCharSpace(0);
+    y += 7;
+    for (const datum of tageMitEintraegen()) {
+      const t = themaAm(datum);
+      const subs = eintraegeAm(datum).filter(e => !istThema(e));
+      platz(12);
+      doc.setDrawColor(...D.linie); doc.setLineWidth(0.2); doc.line(R, y - 4.2, R + B, y - 4.2);
+      schrift("bold", 10, D.gold);
+      doc.text(pdfText(tagLabel(datum)), R, y);
+      schrift("bold", 10, D.tinte);
+      doc.text(doc.splitTextToSize(pdfText((t && t.titel) || ""), B - 70)[0] || "", R + 18, y);
+      schrift("normal", 8.5, D.grau);
+      doc.text(pdfText(datumLang(datum)), R + B, y, { align: "right" });
+      y += 4.6;
+      const strecke = tagStrecke(datum).replace("→", "–");
+      const kmT = tagKm(datum);
+      if (strecke || kmT >= 1) {
+        schrift("normal", 8.5, D.grau);
+        doc.text(pdfText([strecke, kmT >= 1 ? `${formatZahlCH(kmT)} km` : ""].filter(Boolean).join("  ·  ")), R + 18, y);
+        y += 4.6;
+      }
+      for (const e of subs) {
+        platz(5);
+        const pw = pille(nummern.get(e.id), R + 18, y, false);
+        schrift("normal", 9, D.tinte);
+        doc.text(doc.splitTextToSize(pdfText(`${e.titel || e.ort || "Sub-Thema"}${e.ort && e.titel ? `  (${e.ort})` : ""}`), B - 24 - pw)[0], R + 20 + pw, y);
+        y += 4.8;
+      }
+      y += 4;
     }
   }
 
@@ -2317,47 +2386,47 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
     fortschritt && fortschritt(`Tag ${ti + 1} von ${tage.length} …`);
     if (!leer) neueSeite();
     leer = false;
-    seitenTag[doc.getNumberOfPages()] = tagLabel(datum);
     const thema = themaAm(datum);
     const subs = eintraegeAm(datum).filter(e => !istThema(e));
     const kmTag = tagKm(datum);
 
-    // Tageskopf: grosse Tagnummer links, Thema und Route, Mini-Karte rechts
-    const tagesPunkte_ = tagesPunkte(datum, nummern);
-    const mini = tagesPunkte_.length ? await statischeKarte({ punkte: tagesPunkte_, B: 640, H: 480, rand: 60 }) : null;
-    const textB = mini ? B - 62 : B;
+    // Tageskopf: grosse Tagnummer, Datum, Thema, Route
     doc.setFillColor(...D.goldHell); doc.rect(R, y, 14, 1.4, "F");
     y += 9;
     const n = tagNummer(datum);
-    schrift("helvetica", "bold", 8.5, D.grau);
+    schrift("bold", 8.5, D.grau);
     doc.setCharSpace(1); doc.text(n ? "TAG" : "VOR DER REISE", R, y); doc.setCharSpace(0);
-    if (n) { schrift("times", "bold", 40, D.gold); doc.text(String(n), R, y + 14); }
-    schrift("helvetica", "normal", 9, D.grau);
+    if (n) { schrift("bold", 36, D.gold); doc.text(String(n), R, y + 13); }
+    schrift("normal", 9, D.grau);
     doc.text(pdfText(datumLang(datum)).toUpperCase(), R + 24, y);
-    schrift("times", "bold", 21, D.tinte);
-    const thZ = doc.splitTextToSize(pdfText((thema && thema.titel) || tagLabel(datum)), textB - 24);
-    doc.text(thZ, R + 24, y + 9);
-    let ky = y + 9 + (thZ.length - 1) * 8.5;
+    schrift("bold", 19, D.tinte);
+    const thZ = doc.splitTextToSize(pdfText((thema && thema.titel) || tagLabel(datum)), B - 24);
+    doc.text(thZ, R + 24, y + 8.5);
+    let ky = y + 8.5 + (thZ.length - 1) * 7.8;
     const strecke = tagStrecke(datum);
     if (strecke || kmTag >= 1) {
-      schrift("helvetica", "bold", 10, D.gold);
-      doc.text(pdfText(`${strecke.replace("→", "–")}${kmTag >= 1 ? `   ·   ${formatZahlCH(kmTag)} km` : ""}`), R + 24, ky + 8);
-      ky += 8;
+      schrift("bold", 10, D.gold);
+      doc.text(pdfText(`${strecke.replace("→", "–")}${kmTag >= 1 ? `   ·   ${formatZahlCH(kmTag)} km` : ""}`), R + 24, ky + 7.5);
+      ky += 7.5;
     }
-    if (mini) {
-      const mw = 58, mh = mw * mini.h / mini.w;
-      doc.addImage(mini.url, "JPEG", R + B - mw, y - 6, mw, mh);
-      doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R + B - mw, y - 6, mw, mh);
-      y = Math.max(ky + 8, y - 6 + mh + 6);
-    } else {
-      y = Math.max(ky + 8, y + 20);
+    y = Math.max(ky + 7, y + 18);
+    // Tageskarte über die ganze Breite: Streckenabschnitt des Tages
+    const pkt = tagesPunkte(datum, nummern);
+    if (pkt.length) {
+      const tk = await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70 });
+      if (tk) {
+        const th = B * tk.h / tk.w;
+        doc.addImage(tk.url, "JPEG", R, y, B, th);
+        doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, th);
+        y += th + 6;
+      }
     }
-    // Einleitung (Text des Haupteintrags) kursiv
+    // Einleitung (Text des Haupteintrags)
     if (thema && thema.text) {
-      schrift("times", "italic", 12, D.tinte);
+      schrift("italic", 11, D.tinte);
       for (const absatz of pdfText(thema.text).split("\n")) {
         for (const zeile of (absatz ? doc.splitTextToSize(absatz, B) : [""])) {
-          platz(5.8); doc.text(zeile, R, y + 4.5); y += 5.8;
+          platz(5.4); doc.text(zeile, R, y + 4.2); y += 5.4;
         }
       }
       y += 3;
@@ -2366,50 +2435,45 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
     // Sub-Themen
     for (const e of subs) {
       const nr = nummern.get(e.id);
-      // Fotolayout planen: Zeilen aus Feldern [x, b, h]
-      const L = 3.5, n = e.fotos.length;
+      const L = 3.5, nF = e.fotos.length;
       const zeilen = [];
-      if (n === 1) zeilen.push({ h: B * 0.56, felder: [[0, B]] });
-      else if (n === 2) zeilen.push({ h: 64, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
-      else if (n === 3) zeilen.push({ h: 96, drei: true });
-      else if (n === 4) {
+      if (nF === 1) zeilen.push({ h: B * 0.56, felder: [[0, B]] });
+      else if (nF === 2) zeilen.push({ h: 64, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
+      else if (nF === 3) zeilen.push({ h: 96, drei: true });
+      else if (nF === 4) {
         zeilen.push({ h: 58, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
         zeilen.push({ h: 58, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
-      } else {
+      } else if (nF > 4) {
         const d = (B - 2 * L) / 3;
-        for (let j = 0; j < n; j += 3) zeilen.push({ h: 44, felder: [[0, d], [d + L, d], [2 * (d + L), d]].slice(0, n - j) });
+        for (let j = 0; j < nF; j += 3) zeilen.push({ h: 44, felder: [[0, d], [d + L, d], [2 * (d + L), d]].slice(0, nF - j) });
       }
-      // Kopf + Text + erste Fotozeile zusammenhalten
-      schrift("times", "normal", 11.5);
+      schrift("normal", 10.5);
       const textZ = e.text ? pdfText(e.text).split("\n").flatMap(a => a ? doc.splitTextToSize(a, B) : [""]) : [];
-      const kopfH = 26 + (e.ort && e.titel ? 5 : 0) + textZ.length * 5.4 + (zeilen[0] ? zeilen[0].h + 4 : 0);
+      const kopfH = 26 + (e.ort && e.titel ? 5 : 0) + textZ.length * 5.2 + (zeilen[0] ? zeilen[0].h + 4 : 0);
       if (y + kopfH > UNTEN && kopfH < UNTEN - R) neueSeite(); else y += 5;
       if (y > R) { doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.line(R, y, R + B, y); }
       y += 8;
-      doc.setFillColor(...D.goldHell); doc.circle(R + 4.2, y - 1.6, 4.2, "F");
-      schrift("helvetica", "bold", 10, D.weiss);
-      doc.text(String(nr), R + 4.2, y - 0.1, { align: "center" });
-      schrift("helvetica", "bold", 14, D.tinte);
-      const stZ = doc.splitTextToSize(pdfText(e.titel || e.ort || "Sub-Thema"), B - 12);
-      doc.text(stZ, R + 12, y);
-      y += (stZ.length - 1) * 6;
+      const pw = pille(nr, R, y);
+      schrift("bold", 13, D.tinte);
+      const stZ = doc.splitTextToSize(pdfText(e.titel || e.ort || "Sub-Thema"), B - pw - 4);
+      doc.text(stZ, R + pw + 3, y);
+      y += (stZ.length - 1) * 5.6;
       if (e.ort && e.titel) {
-        schrift("helvetica", "normal", 9, D.grau);
-        doc.text(pdfText(e.ort), R + 12, y + 5);
-        y += 5;
+        schrift("normal", 8.5, D.grau);
+        doc.text(pdfText(e.ort), R + pw + 3, y + 4.6);
+        y += 4.6;
       }
       y += 4;
       if (textZ.length) {
-        schrift("times", "normal", 11.5, D.tinte);
-        for (const zeile of textZ) { platz(5.4); doc.text(zeile, R, y + 4.3); y += 5.4; }
+        schrift("normal", 10.5, D.tinte);
+        for (const zeile of textZ) { platz(5.2); doc.text(zeile, R, y + 4.1); y += 5.2; }
         y += 2;
       }
-      // Fotos
       let fi = 0;
       for (const z of zeilen) {
         platz(z.h + 4);
         y += 1;
-        if (z.drei) {   // grosses Foto links, zwei kleine rechts übereinander
+        if (z.drei) {
           const gb = (B - L) * 0.64, kb = B - L - gb, kh = (z.h - L) / 2;
           const [u0, u1, u2] = await Promise.all([bildAusschnitt(e.fotos[0], gb, z.h), bildAusschnitt(e.fotos[1], kb, kh), bildAusschnitt(e.fotos[2], kb, kh)]);
           if (u0) doc.addImage(u0, "JPEG", R, y, gb, z.h);
@@ -2426,18 +2490,19 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt) {
     }
   }
 
-  // Fusszeile (nicht auf der Titelseite)
+  // Fusszeile: links Reisetitel, Mitte Speicherort, rechts Seitenzahl
   const nSeiten = doc.getNumberOfPages();
-  let aktTag = "";
+  const ort = pdfText(`${daten.reise.speicherort || ""}${daten.reise.speicherort ? " › " : ""}${dateiNameOhneEndung || reisebuchName()}.pdf`.replace(/›/g, "/"));
   for (let i = 1; i <= nSeiten; i++) {
-    if (seitenTag[i]) aktTag = seitenTag[i];
     if (mitDeckblatt && i === 1) continue;
     doc.setPage(i);
     doc.setDrawColor(...D.goldHell); doc.setLineWidth(0.4);
     doc.line(R, H - 14, R + 10, H - 14);
-    schrift("helvetica", "normal", 8, D.grau);
-    doc.text(pdfText(reiseTitel()), R + 13, H - 13);
-    doc.text(pdfText(`${aktTag ? aktTag + "  ·  " : ""}${i}`), W - R, H - 13, { align: "right" });
+    schrift("normal", 7.5, D.grau);
+    doc.text(doc.splitTextToSize(pdfText(reiseTitel()), 40)[0], R + 13, H - 13);
+    doc.text(doc.splitTextToSize(ort, 100)[0], W / 2, H - 13, { align: "center" });
+    schrift("bold", 8, D.grau);
+    doc.text(String(i), W - R, H - 13, { align: "right" });
   }
   return doc.output("blob");
 }
@@ -2461,9 +2526,15 @@ function dialogKnopf(text, klasse, aktion) {
 function dialogStatus(text) { document.getElementById("dialogStatus").textContent = text; }
 
 async function teileDatei(datei, titel) {
-  if (navigator.canShare && navigator.canShare({ files: [datei] })) {
-    try { await navigator.share({ files: [datei], title: titel }); return true; }
-    catch (e) { if (e.name === "AbortError") return false; }
+  // Manche iOS-Versionen lassen .json nicht ins Teilen-Menü -> als Text-Datei
+  // mit gleicher Endung anbieten, damit "In Dateien sichern" (OneDrive) geht.
+  const varianten = [datei];
+  if (datei.type === "application/json") varianten.push(new File([datei], datei.name, { type: "text/plain" }));
+  for (const v of varianten) {
+    if (navigator.canShare && navigator.canShare({ files: [v] })) {
+      try { await navigator.share({ files: [v], title: titel }); return true; }
+      catch (e) { if (e.name === "AbortError") return false; }
+    }
   }
   // Rückfall (Computer): Datei herunterladen
   const a = document.createElement("a");
@@ -2515,11 +2586,11 @@ function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
     }
     knopf.disabled = true;
     try {
-      const blob = await erstellePdf(tage, mitDeckblatt, t => { knopf.textContent = `📄 ${t}`; });
+      const blob = await erstellePdf(tage, mitDeckblatt, t => { knopf.textContent = `📄 ${t}`; }, dateiBasis);
       pdfDatei = new File([blob], `${dateiBasis}.pdf`, { type: "application/pdf" });
       knopf.textContent = `📄 PDF teilen / sichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
       knopf.className = "btn-speichern";
-      dialogStatus("PDF ist bereit. Im nächsten Schritt WhatsApp, Dateien oder Drucken wählen.");
+      dialogStatus(`PDF ist bereit (${pdfDatei.name}). Zum Ablegen: „In Dateien sichern“ → ${daten.reise.speicherort || "OneDrive"} → „Ersetzen“. Der Name bleibt immer gleich, die vorherige Version wird so überschrieben.`);
     } catch (fehler) {
       knopf.textContent = "📄 PDF erstellen";
       dialogStatus(fehler.message || "Das PDF konnte nicht erstellt werden.");
@@ -2543,8 +2614,9 @@ const PK = {
   B: 1080, R: 60,
   papier: "#fbfaf7", tinte: "#23262c", grau: "#7a7466", gold: "#d4a24e", linie: "#e6e0d3",
   dunkel: "#10141b", hell: "#e7e6e2",
-  sans: '-apple-system, "Segoe UI", Roboto, sans-serif',
-  serif: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
+  // 12.10.2026: durchgehend Arial, wie im PDF
+  sans: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+  serif: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
 };
 // Zeilenumbruch für Canvas (Absätze bleiben erhalten)
 function umbrechen(g, text, breite) {
@@ -2595,8 +2667,10 @@ function canvasZuDatei(c, name) {
 async function erstellePostkarte(e, nr, datum) {
   const { B, R } = PK, W = B - 2 * R;
   const mess = document.createElement("canvas").getContext("2d");
+  mess.font = `700 34px ${PK.sans}`;
+  const pillB = Math.max(68, mess.measureText(String(nr)).width + 36);
   mess.font = `600 52px ${PK.sans}`;
-  const titelZ = umbrechen(mess, e.titel || e.ort || "Sub-Thema", W - 100);
+  const titelZ = umbrechen(mess, e.titel || e.ort || "Sub-Thema", W - pillB - 24);
   mess.font = `34px ${PK.serif}`;
   const textZ = umbrechen(mess, e.text, W);
   const fotos = e.fotos.slice(0, 4);
@@ -2604,7 +2678,7 @@ async function erstellePostkarte(e, nr, datum) {
   const felder = collageFelder(bilder.length, W);
   const collageH = bilder.length ? Math.max(...felder.map(f => f[1] + f[3])) : 0;
 
-  let H = R + 40 + 24 + titelZ.length * 62 + (e.ort ? 50 : 0) + 20 + textZ.length * 50 + (bilder.length ? 40 + collageH : 0) + 40 + 50 + R - 20;
+  let H = R + 40 + 24 + titelZ.length * 62 + (e.ort ? 50 : 0) + 20 + textZ.length * 50 + (bilder.length ? 40 + collageH : 0) + R;
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
@@ -2616,13 +2690,16 @@ async function erstellePostkarte(e, nr, datum) {
   g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}`.toUpperCase(), R, y + 20);
   y += 54;
   // Nummer + Titel
-  g.beginPath(); g.arc(R + 34, y + 26, 34, 0, Math.PI * 2); g.fillStyle = PK.gold; g.fill();
-  g.fillStyle = PK.dunkel; g.font = `700 36px ${PK.sans}`; g.textAlign = "center";
-  g.fillText(String(nr), R + 34, y + 39);
+  // Nummer als Pille, z.B. "3.1" (wie im PDF)
+  g.beginPath();
+  g.roundRect ? g.roundRect(R, y - 8, pillB, 68, 34) : g.rect(R, y - 8, pillB, 68);
+  g.fillStyle = PK.gold; g.fill();
+  g.fillStyle = PK.dunkel; g.font = `700 34px ${PK.sans}`; g.textAlign = "center";
+  g.fillText(String(nr), R + pillB / 2, y + 38);
   g.textAlign = "left"; g.fillStyle = PK.tinte; g.font = `600 52px ${PK.sans}`;
-  titelZ.forEach((z, i) => g.fillText(z, R + 92, y + 44 + i * 62));
+  titelZ.forEach((z, i) => g.fillText(z, R + pillB + 24, y + 44 + i * 62));
   y += titelZ.length * 62 + 4;
-  if (e.ort) { g.fillStyle = PK.grau; g.font = `30px ${PK.sans}`; g.fillText(`📍 ${e.ort}`, R + 92, y + 30); y += 50; }
+  if (e.ort) { g.fillStyle = PK.grau; g.font = `30px ${PK.sans}`; g.fillText(`📍 ${e.ort}`, R + pillB + 24, y + 30); y += 50; }
   y += 20;
   // Text
   g.fillStyle = PK.tinte; g.font = `34px ${PK.serif}`;
@@ -2641,13 +2718,7 @@ async function erstellePostkarte(e, nr, datum) {
     }
     y += collageH;
   }
-  // Fusszeile
-  y += 40;
-  g.fillStyle = PK.linie; g.fillRect(R, y, W, 2);
-  g.fillStyle = PK.grau; g.font = `24px ${PK.sans}`;
-  g.fillText(`📖 ${reiseTitel()}`, R, y + 40);
-  g.textAlign = "right"; g.fillText(`Nr. ${nr}`, B - R, y + 40); g.textAlign = "left";
-  return c;
+  return c;   // ohne Fusszeile (12.10.2026)
 }
 
 async function erstelleTitelkarte(datum) {
@@ -2662,7 +2733,7 @@ async function erstelleTitelkarte(datum) {
   const titelZ = umbrechen(mess, (t && t.titel) || tagLabel(datum), W);
   mess.font = `34px ${PK.serif}`;
   const textZ = umbrechen(mess, t && t.text, W);
-  const H = R + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30 + textZ.length * 50 + 60 + 50 + R;
+  const H = R + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30 + textZ.length * 50 + R;
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
@@ -2685,11 +2756,7 @@ async function erstelleTitelkarte(datum) {
   y += 30;
   g.fillStyle = PK.hell; g.font = `34px ${PK.serif}`;
   textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
-  y += 60;
-  g.fillStyle = "#262f3d"; g.fillRect(R, y, W, 2);
-  g.fillStyle = "#8b93a3"; g.font = `26px ${PK.sans}`;
-  g.fillText(`${subs.length} Sub-Them${subs.length === 1 ? "a" : "en"} · ${nFotos} Foto${nFotos === 1 ? "" : "s"}`, R, y + 42);
-  return c;
+  return c;   // ohne Fusszeile (12.10.2026)
 }
 
 async function oeffneDialogTage(tage) {
@@ -2776,7 +2843,7 @@ document.getElementById("pdfBtn").addEventListener("click", () => {
   document.getElementById("dialogTitel").textContent = "Reisebericht als PDF";
   dialogStatus(`Deckblatt mit Routenkarte und ${tage.length} Tag${tage.length === 1 ? "" : "e"}, eine Seite je Tag.`);
   dialogEl.hidden = false;
-  pdfKnopf(tage, true, `${dateiName(reiseTitel())}-bericht`);
+  pdfKnopf(tage, true, reisebuchName());
   dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
 });
 
