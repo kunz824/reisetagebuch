@@ -649,6 +649,16 @@
   }
   #dialog h3 { margin: 0; font-size: 16px; }
   #dialog .knopf-spalte { display: flex; flex-direction: column; gap: 8px; }
+  #dialog .platte { max-height: calc(100% - 20px); overflow-y: auto; }
+  .karten-vorschau { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .karten-vorschau img {
+    height: 150px;
+    width: auto;
+    border-radius: 6px;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    background: var(--bg-panel-2);
+  }
   #dialog .knopf-spalte > * { width: 100%; }
 
   /* ── Fotoansicht ──────────────────────────────────────────────────── */
@@ -915,6 +925,7 @@
   <div class="platte" role="dialog" aria-modal="true" aria-labelledby="dialogTitel">
     <h3 id="dialogTitel">Teilen</h3>
     <p class="hinweis" id="dialogStatus"></p>
+    <div class="karten-vorschau" id="dialogVorschau" hidden></div>
     <div class="knopf-spalte" id="dialogKnoepfe"></div>
   </div>
 </div>
@@ -952,7 +963,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "11.10.2026 · 13:00";
+const APP_VERSION = "12.10.2026 · 19:50";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2380,94 +2391,243 @@ function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
   return knopf;
 }
 
-// 11.10.2026: Schritt für Schritt teilen. WhatsApp entscheidet selbst, ob
-// bei einem Teilen-Vorgang der Text oder die Fotos zuerst kommen, und
-// ordnet mehrere Fotos beliebig an. Darum geht jeder Eintrag in zwei
-// Schritten raus: zuerst der Text, dann seine Fotos. So stehen die Fotos
-// immer unter dem passenden Text. iOS verlangt dafür pro Schritt ein Tippen.
-async function eintragDateien(e, start) {
-  const dateien = [];
-  for (let i = 0; i < e.fotos.length && i < 30; i++) {
-    const rec = await idb.get("fotos", e.fotos[i]);
-    if (rec) dateien.push(new File([rec.voll], `${e.datum}-${String(start + i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+// ═════════════════════════════════════════════════════════════════════
+// 12.10.2026: Postkarten-Konfigurator für WhatsApp
+// Tag wählen → die App erzeugt automatisch:
+//   • eine Titelkarte (Haupteintrag: Tag, Start → Ziel, km, Text)
+//   • pro Sub-Thema eine Postkarte: Nummer, Titel, Ort, Text und darunter
+//     die Fotos als Collage
+// Text und Fotos stecken fest im selben Bild -- WhatsApp kann sie nicht
+// mehr auseinanderreissen. Alles geht mit einem Tippen raus.
+// ═════════════════════════════════════════════════════════════════════
+const PK = {
+  B: 1080, R: 60,
+  papier: "#fbfaf7", tinte: "#23262c", grau: "#7a7466", gold: "#d4a24e", linie: "#e6e0d3",
+  dunkel: "#10141b", hell: "#e7e6e2",
+  sans: '-apple-system, "Segoe UI", Roboto, sans-serif',
+  serif: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif',
+};
+// Zeilenumbruch für Canvas (Absätze bleiben erhalten)
+function umbrechen(g, text, breite) {
+  const zeilen = [];
+  for (const absatz of String(text || "").split("\n")) {
+    if (!absatz.trim()) { zeilen.push(""); continue; }
+    let zeile = "";
+    for (const wort of absatz.split(/\s+/)) {
+      const test = zeile ? `${zeile} ${wort}` : wort;
+      if (g.measureText(test).width <= breite || !zeile) zeile = test;
+      else { zeilen.push(zeile); zeile = wort; }
+    }
+    if (zeile) zeilen.push(zeile);
   }
-  return dateien;
+  while (zeilen.length && !zeilen[zeilen.length - 1]) zeilen.pop();
+  return zeilen;
+}
+async function ladeFotoBild(id) {
+  const rec = await idb.get("fotos", id);
+  if (!rec) return null;
+  try { return await createImageBitmap(rec.voll); }
+  catch { return await ladeBild(rec.voll).catch(() => null); }
+}
+// Bild "cover"-artig in ein abgerundetes Feld setzen
+function zeichneCover(g, bild, x, y, w, h, rad = 14) {
+  const bw = bild.width, bh = bild.height;
+  const f = Math.max(w / bw, h / bh);
+  const sw = w / f, sh = h / f;
+  g.save();
+  g.beginPath();
+  g.roundRect ? g.roundRect(x, y, w, h, rad) : g.rect(x, y, w, h);
+  g.clip();
+  g.drawImage(bild, (bw - sw) / 2, (bh - sh) / 2, sw, sh, x, y, w, h);
+  g.restore();
+}
+// Anordnung der Fotos (bis 4, bei mehr: "+N" auf dem letzten)
+function collageFelder(n, W) {
+  const L = 16, halb = (W - L) / 2;
+  if (n === 1) return [[0, 0, W, Math.round(W * 0.72)]];
+  if (n === 2) return [[0, 0, halb, 420], [halb + L, 0, halb, 420]];
+  if (n === 3) return [[0, 0, W, 560], [0, 560 + L, halb, 380], [halb + L, 560 + L, halb, 380]];
+  return [[0, 0, halb, 400], [halb + L, 0, halb, 400], [0, 400 + L, halb, 400], [halb + L, 400 + L, halb, 400]];
+}
+function canvasZuDatei(c, name) {
+  return new Promise(ok => c.toBlob(b => ok(new File([b], name, { type: "image/jpeg" })), "image/jpeg", 0.88));
+}
+
+async function erstellePostkarte(e, nr, datum) {
+  const { B, R } = PK, W = B - 2 * R;
+  const mess = document.createElement("canvas").getContext("2d");
+  mess.font = `600 52px ${PK.sans}`;
+  const titelZ = umbrechen(mess, e.titel || e.ort || "Sub-Thema", W - 100);
+  mess.font = `34px ${PK.serif}`;
+  const textZ = umbrechen(mess, e.text, W);
+  const fotos = e.fotos.slice(0, 4);
+  const bilder = (await Promise.all(fotos.map(ladeFotoBild))).filter(Boolean);
+  const felder = collageFelder(bilder.length, W);
+  const collageH = bilder.length ? Math.max(...felder.map(f => f[1] + f[3])) : 0;
+
+  let H = R + 40 + 24 + titelZ.length * 62 + (e.ort ? 50 : 0) + 20 + textZ.length * 50 + (bilder.length ? 40 + collageH : 0) + 40 + 50 + R - 20;
+  const c = document.createElement("canvas");
+  c.width = B; c.height = Math.round(H);
+  const g = c.getContext("2d");
+  g.fillStyle = PK.papier; g.fillRect(0, 0, B, H);
+  g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
+  let y = R + 10;
+  // Kopfzeile
+  g.fillStyle = PK.grau; g.font = `600 26px ${PK.sans}`; g.textBaseline = "alphabetic";
+  g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}`.toUpperCase(), R, y + 20);
+  y += 54;
+  // Nummer + Titel
+  g.beginPath(); g.arc(R + 34, y + 26, 34, 0, Math.PI * 2); g.fillStyle = PK.gold; g.fill();
+  g.fillStyle = PK.dunkel; g.font = `700 36px ${PK.sans}`; g.textAlign = "center";
+  g.fillText(String(nr), R + 34, y + 39);
+  g.textAlign = "left"; g.fillStyle = PK.tinte; g.font = `600 52px ${PK.sans}`;
+  titelZ.forEach((z, i) => g.fillText(z, R + 92, y + 44 + i * 62));
+  y += titelZ.length * 62 + 4;
+  if (e.ort) { g.fillStyle = PK.grau; g.font = `30px ${PK.sans}`; g.fillText(`📍 ${e.ort}`, R + 92, y + 30); y += 50; }
+  y += 20;
+  // Text
+  g.fillStyle = PK.tinte; g.font = `34px ${PK.serif}`;
+  textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
+  // Fotos
+  if (bilder.length) {
+    y += 40;
+    bilder.forEach((bild, i) => zeichneCover(g, bild, R + felder[i][0], y + felder[i][1], felder[i][2], felder[i][3]));
+    if (e.fotos.length > 4) {
+      const f = felder[3];
+      g.fillStyle = "rgba(16,20,27,0.55)"; g.beginPath();
+      g.roundRect ? g.roundRect(R + f[0], y + f[1], f[2], f[3], 14) : g.rect(R + f[0], y + f[1], f[2], f[3]); g.fill();
+      g.fillStyle = "#fff"; g.font = `700 72px ${PK.sans}`; g.textAlign = "center";
+      g.fillText(`+${e.fotos.length - 4}`, R + f[0] + f[2] / 2, y + f[1] + f[3] / 2 + 26);
+      g.textAlign = "left";
+    }
+    y += collageH;
+  }
+  // Fusszeile
+  y += 40;
+  g.fillStyle = PK.linie; g.fillRect(R, y, W, 2);
+  g.fillStyle = PK.grau; g.font = `24px ${PK.sans}`;
+  g.fillText(`📖 ${reiseTitel()}`, R, y + 40);
+  g.textAlign = "right"; g.fillText(`Nr. ${nr}`, B - R, y + 40); g.textAlign = "left";
+  return c;
+}
+
+async function erstelleTitelkarte(datum) {
+  const { B, R } = PK, W = B - 2 * R;
+  const t = themaAm(datum);
+  const subs = eintraegeAm(datum).filter(e => !istThema(e));
+  const nFotos = subs.reduce((s, e) => s + e.fotos.length, 0);
+  const kmTag = tagKm(datum);
+  const strecke = tagStrecke(datum);
+  const mess = document.createElement("canvas").getContext("2d");
+  mess.font = `700 64px ${PK.sans}`;
+  const titelZ = umbrechen(mess, (t && t.titel) || tagLabel(datum), W);
+  mess.font = `34px ${PK.serif}`;
+  const textZ = umbrechen(mess, t && t.text, W);
+  const H = R + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30 + textZ.length * 50 + 60 + 50 + R;
+  const c = document.createElement("canvas");
+  c.width = B; c.height = Math.round(H);
+  const g = c.getContext("2d");
+  g.fillStyle = PK.dunkel; g.fillRect(0, 0, B, H);
+  g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
+  let y = R + 20;
+  g.fillStyle = PK.gold; g.font = `600 28px ${PK.sans}`;
+  g.fillText(`📖 ${reiseTitel()}`.toUpperCase(), R, y + 20);
+  y += 60;
+  g.fillStyle = "#8b93a3"; g.font = `600 30px ${PK.sans}`;
+  g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}`, R, y + 26);
+  y += 70;
+  g.fillStyle = PK.hell; g.font = `700 64px ${PK.sans}`;
+  titelZ.forEach(z => { g.fillText(z, R, y + 54); y += 76; });
+  if (strecke || kmTag >= 1) {
+    g.fillStyle = PK.gold; g.font = `600 34px ${PK.sans}`;
+    g.fillText(`${tagStreckeSymbole(datum)}${kmTag >= 1 ? `  ·  ${formatZahlCH(kmTag)} km` : ""}`, R, y + 44);
+    y += 64;
+  }
+  y += 30;
+  g.fillStyle = PK.hell; g.font = `34px ${PK.serif}`;
+  textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
+  y += 60;
+  g.fillStyle = "#262f3d"; g.fillRect(R, y, W, 2);
+  g.fillStyle = "#8b93a3"; g.font = `26px ${PK.sans}`;
+  g.fillText(`${subs.length} Sub-Them${subs.length === 1 ? "a" : "en"} · ${nFotos} Foto${nFotos === 1 ? "" : "s"}`, R, y + 42);
+  return c;
 }
 
 async function oeffneDialogTage(tage) {
   const knoepfeEl = document.getElementById("dialogKnoepfe");
+  const vorschau = document.getElementById("dialogVorschau");
   knoepfeEl.innerHTML = "";
+  vorschau.innerHTML = "";
+  vorschau.hidden = true;
   document.getElementById("dialogTitel").textContent = tage.length === 1
     ? `${tagLabel(tage[0])} teilen` : `${tage.length} Tage teilen`;
-  dialogStatus("Fotos werden vorbereitet …");
+  dialogStatus("Postkarten werden erstellt …");
   dialogEl.hidden = false;
 
-  // Schritte aufbauen: je Eintrag "Text" und (falls vorhanden) "Fotos"
-  const schritte = [];
-  tage.forEach((datum, ti) => eintraegeAm(datum).forEach((e, ei) => {
-    const name = istThema(e) ? `${tagLabel(datum)}` : `${tagLabel(datum)} ▸ ${subNummern().get(e.id)} ${e.titel || ""}`.trim();
-    schritte.push({ art: "text", name, text: eintragWhatsapp(e, istThema(e), ti === 0 && ei === 0) });
-    if (e.fotos.length) schritte.push({ art: "fotos", name, eintrag: e, dateien: null });
-  }));
-  let pos = 0;
-
-  const weiter = dialogKnopf("", "btn-speichern", () => fuehreAus());
-  const ueberspringen = dialogKnopf("Diesen Schritt überspringen", "btn-abbrechen", () => { pos++; zeigeSchritt(); });
-  dialogKnopf("💬 Nur Text (alles in einer Nachricht)", "btn-abbrechen", async () => {
+  const alles = dialogKnopf("💬 Alles teilen (1 Tippen)", "btn-speichern", () => teileAlles());
+  alles.disabled = true;
+  const einzeln = dialogKnopf("Karte für Karte teilen", "btn-abbrechen", () => teileNaechste());
+  einzeln.disabled = true;
+  dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
     const text = whatsappText(tage);
     if (navigator.share) { try { await navigator.share({ text }); } catch { /* abgebrochen */ } }
     else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   });
   pdfKnopf(tage, false, `${dateiName(reiseTitel())}-${tage.length === 1 ? dateiName(tagLabel(tage[0])) : tage.length + "-tage"}`);
-  dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+  dialogKnopf("Schliessen", "btn-abbrechen", () => {
+    vorschau.querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src));
+    schliesseDialog();
+  });
 
-  function zeigeSchritt() {
-    if (pos >= schritte.length) {
-      weiter.textContent = "✓ Alles geteilt";
-      weiter.disabled = true;
-      ueberspringen.hidden = true;
-      dialogStatus("Fertig. Text und Fotos sind in der richtigen Reihenfolge verschickt.");
+  // Karten erzeugen: je Tag Titelkarte + eine Postkarte pro Sub-Thema
+  const karten = [];
+  const nummern = subNummern();
+  try {
+    for (const datum of tage) {
+      const tagNr = String(tagNummer(datum) || 0).padStart(2, "0");
+      const titel = await erstelleTitelkarte(datum);
+      karten.push(await canvasZuDatei(titel, `tag${tagNr}-0-tagesziel.jpg`));
+      const subs = eintraegeAm(datum).filter(e => !istThema(e));
+      for (let i = 0; i < subs.length; i++) {
+        dialogStatus(`Postkarte ${i + 1} von ${subs.length} (${tagLabel(datum)}) …`);
+        const kc = await erstellePostkarte(subs[i], nummern.get(subs[i].id), datum);
+        karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}.jpg`));
+      }
+    }
+  } catch (fehler) {
+    console.error(fehler);
+    dialogStatus("Die Postkarten konnten nicht erstellt werden. Nur Text oder PDF nutzen.");
+    return;
+  }
+  for (const k of karten) {
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(k);
+    img.alt = k.name;
+    vorschau.appendChild(img);
+  }
+  vorschau.hidden = false;
+  alles.disabled = false;
+  einzeln.disabled = false;
+  alles.textContent = `💬 Alles teilen · ${karten.length} Karte${karten.length === 1 ? "" : "n"} (1 Tippen)`;
+  dialogStatus("Bereit. „Alles teilen“ schickt Tagesziel und alle Postkarten auf einmal. Wichtig ist dir die genaue Reihenfolge? Dann „Karte für Karte“.");
+
+  async function teileAlles() {
+    if (!(navigator.canShare && navigator.canShare({ files: karten }))) {
+      dialogStatus("Dieses Gerät kann keine Bilder teilen. PDF oder Nur Text nutzen.");
       return;
     }
-    const st = schritte[pos];
-    const n = st.dateien ? st.dateien.length : st.eintrag ? st.eintrag.fotos.length : 0;
-    weiter.textContent = st.art === "text"
-      ? `▶ ${st.name} · Text senden`
-      : `▶ ${st.name} · ${n} Foto${n === 1 ? "" : "s"} senden`;
-    weiter.disabled = st.art === "fotos" && !st.dateien;
-    ueberspringen.hidden = false;
-    dialogStatus(`Schritt ${pos + 1} von ${schritte.length}. Nach dem Senden in WhatsApp hier mit dem nächsten Schritt weiter.`);
+    try { await navigator.share({ files: karten }); dialogStatus("Geteilt."); }
+    catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. Karte für Karte versuchen."); }
   }
-
-  async function fuehreAus() {
-    const st = schritte[pos];
-    if (!st) return;
+  let pos = 0;
+  async function teileNaechste() {
+    if (pos >= karten.length) return;
     try {
-      if (st.art === "text") {
-        if (navigator.share) await navigator.share({ text: st.text });
-        else window.open(`https://wa.me/?text=${encodeURIComponent(st.text)}`, "_blank", "noopener");
-      } else {
-        if (!(navigator.canShare && navigator.canShare({ files: st.dateien }))) {
-          dialogStatus("Dieses Gerät kann keine Fotos teilen. Schritt überspringen oder PDF nutzen.");
-          return;
-        }
-        await navigator.share({ files: st.dateien });
-      }
+      await navigator.share({ files: [karten[pos]] });
       pos++;
-      zeigeSchritt();
-    } catch (e) {
-      if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. Nochmals versuchen oder PDF nutzen.");
-    }
-  }
-
-  zeigeSchritt();
-  // Fotos im Hintergrund vorbereiten
-  let nr = 0;
-  for (const st of schritte) {
-    if (st.art !== "fotos") continue;
-    st.dateien = await eintragDateien(st.eintrag, nr);
-    nr += st.dateien.length;
-    if (schritte[pos] === st) zeigeSchritt();
+      einzeln.textContent = pos >= karten.length ? "✓ Alle Karten geteilt" : `Nächste Karte teilen (${pos + 1} von ${karten.length})`;
+      einzeln.disabled = pos >= karten.length;
+    } catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt."); }
   }
 }
 
