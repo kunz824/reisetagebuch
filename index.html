@@ -921,7 +921,7 @@
       <button type="button" class="btn-abbrechen" id="druckBtn">🖨️ Drucken</button>
       <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Speichern</button>
     </div>
-    <p class="hinweis" style="margin-top:8px">PDF: Bericht mit Karte und Fotos zum Sichern, Drucken oder Senden. Drucken: für den Computer. Speichern: Sicherung in den OneDrive-Ordner (siehe unten).</p>
+    <p class="hinweis" style="margin-top:8px">PDF: Bericht mit Karte und Fotos zum Sichern, Drucken oder Senden. Drucken: für den Computer. Speichern: Sicherung als Datei (z.B. ins iCloud Drive).</p>
     <h2>Vorschau</h2>
     <div id="berichtDruck"></div>
 
@@ -932,19 +932,6 @@
       <p class="hinweis" id="appVersion" style="opacity:.7"></p>
     </div>
 
-    <h2>OneDrive</h2>
-    <div class="formular">
-      <p class="hinweis" id="odStatus">Nicht verbunden</p>
-      <label>Anwendungs-ID (Client-ID) aus der Microsoft-App-Registrierung
-        <input type="text" id="odClientId" maxlength="60" placeholder="z.B. 1a2b3c4d-…" autocomplete="off" autocapitalize="off" spellcheck="false">
-      </label>
-      <p class="hinweis">Umleitungs-URI (bei Microsoft als «Single-Page-Anwendung» eintragen):<br><b id="odRedirect" style="user-select:all;word-break:break-all"></b></p>
-      <div class="knopf-reihe">
-        <button type="button" class="btn-speichern" id="odVerbinden">🔑 Mit OneDrive verbinden</button>
-        <button type="button" class="btn-abbrechen" id="odTrennen">Trennen</button>
-      </div>
-      <p class="hinweis">Verbunden schreibt die App PDF und Sicherung direkt in den Speicherort oben und ersetzt jeweils die vorherige Version.</p>
-    </div>
   </section>
 </main>
 </div>
@@ -999,7 +986,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.10.2026 · 23:10";
+const APP_VERSION = "12.10.2026 · 23:20";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1287,7 +1274,6 @@ function renderAlles() {
     ? `${datumLang(r.start)} – ${datumLang(r.ende)} · ${k.tage} Tage`
     : (r.untertitel || "Titel und Reisedaten im Register Bericht festlegen");
   document.title = daten.reise.titel ? `${daten.reise.titel} · Reisetagebuch` : "Reisetagebuch";
-  if (typeof renderOneDrive === "function") try { renderOneDrive(); } catch { /* beim Start noch nicht bereit */ }
 
   document.getElementById("sTage").textContent = k.tage || "–";
   document.getElementById("sEintraege").textContent = k.eintraege;
@@ -2591,7 +2577,7 @@ function whatsappText(tage, mitReisetitel = true) {
   return teile.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function pdfKnopf(tage, mitDeckblatt, dateiBasis, odWeiter) {
+function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
   let pdfDatei = null;
   const knopf = dialogKnopf("📄 PDF erstellen", "btn-abbrechen", async () => {
     if (pdfDatei) {
@@ -2605,14 +2591,7 @@ function pdfKnopf(tage, mitDeckblatt, dateiBasis, odWeiter) {
       pdfDatei = new File([blob], `${dateiBasis}.pdf`, { type: "application/pdf" });
       knopf.textContent = `📄 PDF teilen / sichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
       knopf.className = "btn-speichern";
-      if (odWeiter && odEingerichtet()) {
-        // 12.10.2026: direkt ins OneDrive, vorherige Version wird ersetzt
-        knopf.textContent = `📤 PDF teilen (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
-        knopf.className = "btn-abbrechen";
-        await odHochladenImDialog(blob, pdfDatei.name, odWeiter);
-      } else {
-        dialogStatus(`PDF ist bereit (${pdfDatei.name}).${odWeiter ? " Tipp: Im Register Bericht unter OneDrive verbinden, dann speichert die App das PDF direkt und ersetzt die vorherige Version." : ""}`);
-      }
+      dialogStatus(`PDF ist bereit (${pdfDatei.name}). Zum Ablegen: „In Dateien sichern“ und den gewünschten Ordner wählen.`);
     } catch (fehler) {
       knopf.textContent = "📄 PDF erstellen";
       dialogStatus(fehler.message || "Das PDF konnte nicht erstellt werden.");
@@ -2891,192 +2870,11 @@ function oeffnePdfDialog() {
   document.getElementById("dialogTitel").textContent = "Reisebericht als PDF";
   dialogStatus(`Deckblatt mit Routenkarte und ${tage.length} Tag${tage.length === 1 ? "" : "e"}, eine Seite je Tag.`);
   dialogEl.hidden = false;
-  const knopf = pdfKnopf(tage, true, reisebuchName(), "pdf");
+  const knopf = pdfKnopf(tage, true, reisebuchName());
   dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
   return knopf;
 }
 document.getElementById("pdfBtn").addEventListener("click", () => oeffnePdfDialog());
-
-// ═════════════════════════════════════════════════════════════════════
-// 12.10.2026: Direkte OneDrive-Anbindung (Microsoft Graph)
-// Anmeldung per OAuth 2.0 mit PKCE (ohne Server). Danach schreibt die App
-// PDF und Sicherung selbst in den Speicherort-Ordner und ersetzt die
-// vorherige Datei. Microsoft gibt Web-Apps eine Anmeldung für 24 Stunden;
-// danach genügt ein Tippen auf "Bei OneDrive anmelden".
-// ═════════════════════════════════════════════════════════════════════
-const OD = {
-  auth: "https://login.microsoftonline.com/consumers/oauth2/v2.0",
-  graph: "https://graph.microsoft.com/v1.0",
-  scope: "Files.ReadWrite offline_access",
-  redirect: new URL("./", location.href).href,
-};
-const STANDARD_SPEICHERORT = "OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch";
-class OdAnmeldungNoetig extends Error { constructor() { super("Anmeldung bei OneDrive nötig."); } }
-function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
-function lsSet(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* egal */ } }
-// Anwendungs-ID der Microsoft-App-Registrierung "Reisetagebuch" (12.10.2026)
-const OD_CLIENT_ID = "215ccdf2-a8d5-4edf-a625-5501e5e6ce2d";
-const odClientId = () => (lsGet("rt_od_client") || OD_CLIENT_ID).trim();
-const odEingerichtet = () => !!odClientId() && !!lsGet("rt_od_token");
-function b64url(bytes) {
-  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-async function odAnmelden(weiter) {
-  if (!odClientId()) { zeigeRegister("bericht"); alert("Bitte zuerst im Register Bericht unter OneDrive die Anwendungs-ID eintragen."); return; }
-  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
-  const state = b64url(crypto.getRandomValues(new Uint8Array(12)));
-  lsSet("rt_od_pkce", JSON.stringify({ verifier, state, weiter: weiter || "" }));
-  const p = new URLSearchParams({
-    client_id: odClientId(), response_type: "code", redirect_uri: OD.redirect, response_mode: "query",
-    scope: OD.scope, state, code_challenge: challenge, code_challenge_method: "S256",
-  });
-  location.href = `${OD.auth}/authorize?${p}`;
-}
-async function odToken(params) {
-  const r = await fetch(`${OD.auth}/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: odClientId(), scope: OD.scope, ...params }),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.access_token) throw new Error(j.error_description || j.error || `Anmeldung fehlgeschlagen (${r.status})`);
-  const alt = JSON.parse(lsGet("rt_od_token") || "{}");
-  lsSet("rt_od_token", JSON.stringify({
-    access: j.access_token,
-    refresh: j.refresh_token || alt.refresh,
-    bis: Date.now() + (j.expires_in - 120) * 1000,
-  }));
-}
-// Rückkehr von der Microsoft-Anmeldung (?code=… in der Adresse)
-async function odRueckkehr() {
-  const q = new URLSearchParams(location.search);
-  if (!q.has("code") && !q.has("error")) return null;
-  history.replaceState(null, "", OD.redirect);
-  const pk = JSON.parse(lsGet("rt_od_pkce") || "{}");
-  lsSet("rt_od_pkce", null);
-  if (q.has("error")) throw new Error(q.get("error_description") || q.get("error"));
-  if (!pk.verifier || q.get("state") !== pk.state) throw new Error("Anmeldung ungültig, bitte nochmals verbinden.");
-  await odToken({ grant_type: "authorization_code", code: q.get("code"), redirect_uri: OD.redirect, code_verifier: pk.verifier });
-  return pk.weiter || "";
-}
-async function odAccessToken() {
-  const t = JSON.parse(lsGet("rt_od_token") || "null");
-  if (!t) throw new OdAnmeldungNoetig();
-  if (Date.now() < t.bis) return t.access;
-  if (t.refresh) {
-    try { await odToken({ grant_type: "refresh_token", refresh_token: t.refresh }); return JSON.parse(lsGet("rt_od_token")).access; }
-    catch { /* abgelaufen */ }
-  }
-  throw new OdAnmeldungNoetig();
-}
-async function odFetch(url, opt = {}) {
-  const tok = await odAccessToken();
-  const r = await fetch(url, { ...opt, headers: { ...(opt.headers || {}), Authorization: `Bearer ${tok}` } });
-  if (r.status === 401) { lsSet("rt_od_token", JSON.stringify({ ...JSON.parse(lsGet("rt_od_token") || "{}"), bis: 0 })); throw new OdAnmeldungNoetig(); }
-  return r;
-}
-// "OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch" -> ["02_Ferien", "New Zealand Reise", "Reisetagebuch"]
-function odOrdnerTeile() {
-  return (daten.reise.speicherort || STANDARD_SPEICHERORT).split(/›|\/|\\|>/).map(s => s.trim()).filter(Boolean)
-    .filter((s, i) => !(i === 0 && /^onedrive/i.test(s)));
-}
-const odPfad = p => p.split("/").map(encodeURIComponent).join("/");
-async function odOrdnerSicherstellen() {
-  let pfad = "";
-  for (const teil of odOrdnerTeile()) {
-    const neu = pfad ? `${pfad}/${teil}` : teil;
-    const r = await odFetch(`${OD.graph}/me/drive/root:/${odPfad(neu)}`);
-    if (r.status === 404) {
-      const eltern = pfad ? `${OD.graph}/me/drive/root:/${odPfad(pfad)}:/children` : `${OD.graph}/me/drive/root/children`;
-      const c = await odFetch(eltern, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: teil, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
-      });
-      if (!c.ok && c.status !== 409) throw new Error(`Ordner „${teil}“ konnte nicht angelegt werden (${c.status}).`);
-    } else if (!r.ok) throw new Error(`OneDrive antwortet nicht (${r.status}).`);
-    pfad = neu;
-  }
-  return pfad;
-}
-function xhrPut(url, body, kopf, fortschritt) {
-  return new Promise((ok, fehler) => {
-    const x = new XMLHttpRequest();
-    x.open("PUT", url);
-    for (const [k, v] of Object.entries(kopf)) x.setRequestHeader(k, v);
-    x.upload.onprogress = ev => { if (ev.lengthComputable && fortschritt) fortschritt(ev.loaded); };
-    x.onload = () => ok({ status: x.status, text: x.responseText });
-    x.onerror = () => fehler(new Error("Keine Verbindung zu OneDrive."));
-    x.send(body);
-  });
-}
-// Datei in den Speicherort-Ordner schreiben; eine vorhandene Datei gleichen Namens wird ersetzt.
-async function odHochladen(blob, name, fortschritt) {
-  const ordner = await odOrdnerSicherstellen();
-  const ziel = `${ordner ? ordner + "/" : ""}${name}`;
-  const proz = n => fortschritt && fortschritt(Math.min(100, Math.round(n / blob.size * 100)));
-  if (blob.size <= 60 * 1048576) {
-    const tok = await odAccessToken();
-    const r = await xhrPut(`${OD.graph}/me/drive/root:/${odPfad(ziel)}:/content?@microsoft.graph.conflictBehavior=replace`,
-      blob, { Authorization: `Bearer ${tok}`, "Content-Type": blob.type || "application/octet-stream" }, proz);
-    if (r.status === 401) throw new OdAnmeldungNoetig();
-    if (r.status >= 300) throw new Error(`Hochladen fehlgeschlagen (${r.status}).`);
-    return ziel;
-  }
-  // Grosse Dateien in Teilen (Vielfache von 320 KiB)
-  const s = await odFetch(`${OD.graph}/me/drive/root:/${odPfad(ziel)}:/createUploadSession`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace" } }),
-  });
-  if (!s.ok) throw new Error(`Hochladen fehlgeschlagen (${s.status}).`);
-  const { uploadUrl } = await s.json();
-  const STUECK = 16 * 327680;   // 5 MiB
-  for (let a = 0; a < blob.size; a += STUECK) {
-    const e = Math.min(a + STUECK, blob.size);
-    const r = await xhrPut(uploadUrl, blob.slice(a, e), { "Content-Range": `bytes ${a}-${e - 1}/${blob.size}` }, n => proz(a + n));
-    if (r.status >= 300) throw new Error(`Hochladen fehlgeschlagen (${r.status}).`);
-  }
-  return ziel;
-}
-// Hochladen im Dialog, mit Anmelde-Knopf, falls die 24 Stunden um sind
-async function odHochladenImDialog(blob, name, weiter) {
-  try {
-    dialogStatus("Wird ins OneDrive geschrieben …");
-    const ziel = await odHochladen(blob, name, p => dialogStatus(`Wird ins OneDrive geschrieben … ${p} %`));
-    dialogStatus(`✓ Im OneDrive gespeichert (vorherige Version ersetzt):\n${ziel.replace(/\//g, " › ")}`);
-    return true;
-  } catch (fehler) {
-    if (fehler instanceof OdAnmeldungNoetig) {
-      dialogStatus("Die OneDrive-Anmeldung ist abgelaufen (gilt jeweils 24 Stunden). Kurz anmelden, danach geht es automatisch weiter.");
-      const k = dialogKnopf("🔑 Bei OneDrive anmelden", "btn-speichern", () => odAnmelden(weiter));
-      document.getElementById("dialogKnoepfe").prepend(k);
-    } else {
-      dialogStatus(`OneDrive: ${fehler.message}`);
-      console.error(fehler);
-    }
-    return false;
-  }
-}
-function renderOneDrive() {
-  document.getElementById("odClientId").value = odClientId();
-  document.getElementById("odRedirect").textContent = OD.redirect;
-  const t = JSON.parse(lsGet("rt_od_token") || "null");
-  document.getElementById("odStatus").textContent = !odClientId() ? "Nicht eingerichtet"
-    : !t ? "Nicht verbunden"
-    : `✓ Verbunden · Ziel: ${(daten.reise.speicherort || STANDARD_SPEICHERORT)}`;
-  document.getElementById("odTrennen").hidden = !t;
-}
-document.getElementById("odClientId").addEventListener("change", ev => {
-  const neu = ev.target.value.trim();
-  if (neu !== odClientId()) lsSet("rt_od_token", null);
-  lsSet("rt_od_client", neu || null);
-  renderOneDrive();
-});
-document.getElementById("odVerbinden").addEventListener("click", () => {
-  lsSet("rt_od_client", document.getElementById("odClientId").value.trim() || null);
-  odAnmelden("");
-});
-document.getElementById("odTrennen").addEventListener("click", () => { lsSet("rt_od_token", null); renderOneDrive(); });
 
 // ── Datensicherung ───────────────────────────────────────────────────
 // Anzeige "letzte Sicherung" und Erinnerung im Tagebuch
@@ -3096,7 +2894,7 @@ function renderSicherungsInfo() {
     const tage = letzte ? Math.floor((Date.now() - letzte.getTime()) / 86400000) : null;
     document.getElementById("sicherungHinweisText").textContent = letzte
       ? `Neue Einträge seit der letzten Sicherung (vor ${tage} Tag${tage === 1 ? "" : "en"})`
-      : "Noch keine Sicherung im OneDrive";
+      : "Noch keine Sicherung";
   }
 }
 document.getElementById("sicherungJetzt").addEventListener("click", () => document.getElementById("sicherungBtn").click());
@@ -3128,17 +2926,10 @@ document.getElementById("sicherungBtn").addEventListener("click", async () => {
     knopf.onclick = async () => {
       if (!(await teileDatei(datei, "Sicherung Reisetagebuch"))) return;
       await gesichert();
-      dialogStatus("Datei weitergegeben.");
+      dialogStatus("Gesichert.");
     };
-    if (odEingerichtet()) {
-      // 12.10.2026: direkt ins OneDrive, vorherige Sicherung wird ersetzt
-      knopf.textContent = `📤 Zusätzlich teilen (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
-      knopf.className = "btn-abbrechen";
-      if (await odHochladenImDialog(blob, datei.name, "sicherung")) await gesichert();
-    } else {
-      knopf.textContent = `💾 Sicherung speichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
-      dialogStatus(`Bereit (${datei.name}). Tipp: Im Register Bericht unter OneDrive verbinden, dann speichert die App die Sicherung direkt und ersetzt die vorherige.`);
-    }
+    knopf.textContent = `💾 Sicherung speichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
+    dialogStatus(`Bereit (${datei.name}). Im Teilen-Menü „In Dateien sichern“ → iCloud Drive wählen.`);
   } catch (fehler) {
     dialogStatus("Die Sicherung konnte nicht erstellt werden.");
     console.error(fehler);
@@ -3260,22 +3051,7 @@ window.addEventListener("load", positioniereWelle);
   }
   document.getElementById("appVersion").textContent = `APP-Version ${APP_VERSION}`;
   renderAlles();
-  renderOneDrive();
   positioniereWelle();
-  // Rückkehr von der OneDrive-Anmeldung: verbunden melden und Aktion fortsetzen
-  try {
-    const weiter = await odRueckkehr();
-    if (weiter !== null) {
-      renderOneDrive();
-      zeigeRegister("bericht");
-      if (weiter === "pdf") oeffnePdfDialog().click();
-      else if (weiter === "sicherung") document.getElementById("sicherungBtn").click();
-      else setzeStand("✓ Mit OneDrive verbunden");
-    }
-  } catch (fehler) {
-    zeigeRegister("bericht");
-    document.getElementById("odStatus").textContent = `⚠ OneDrive: ${fehler.message}`;
-  }
   // Speicher als "dauerhaft" anfragen, damit iOS die Daten nicht aufräumt
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch { /* egal */ }
   // Offline-Betrieb: App und Bibliotheken zwischenspeichern
