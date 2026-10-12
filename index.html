@@ -593,6 +593,7 @@
 
   /* ── Bericht (Papier) ─────────────────────────────────────────────── */
   #berichtDruck { display: flex; flex-direction: column; gap: 12px; }
+  #berichtDruck .pdf-seite { display: block; width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,.35); background: #fff; }
   .seite {
     background: var(--papier);
     color: var(--tinte);
@@ -770,7 +771,7 @@
 
   /* ── Druck: nur der Bericht, hell, eine Seite je Tag ──────────────── */
   @media print {
-    @page { size: A4; margin: 14mm 14mm 16mm; }
+    @page { size: A4; margin: 0; }
     :root { color-scheme: light; }
     html, body { height: auto; overflow: visible; background: #fff; display: block; }
     #scroller { position: static; overflow: visible; }
@@ -782,6 +783,9 @@
     #berichtDruck { gap: 0; }
     .seite { box-shadow: none; border-radius: 0; padding: 0; background: #fff; break-after: page; }
     .seite:last-child { break-after: auto; }
+    #berichtDruck .pdf-seite { box-shadow: none; border-radius: 0; width: 100%; height: 296mm; object-fit: contain; break-after: page; }
+    #register-bericht, #berichtDruck { padding: 0 !important; margin: 0 !important; }
+    #berichtDruck .pdf-seite:last-child { break-after: auto; }
     .seite .fotos img, .eintrag-druck { break-inside: avoid; }
   }
 </style>
@@ -916,12 +920,13 @@
     </div>
 
     <h2>Bericht</h2>
-    <div class="knopf-drei">
+    <div class="knopf-drei" style="grid-template-columns:repeat(2, minmax(0, 1fr))">
       <button type="button" class="btn-speichern" id="pdfBtn">📄 PDF</button>
+      <button type="button" class="btn-abbrechen" id="vorschauBtn">👁 Vorschau</button>
       <button type="button" class="btn-abbrechen" id="druckBtn">🖨️ Drucken</button>
       <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Speichern</button>
     </div>
-    <p class="hinweis" style="margin-top:8px">PDF: Bericht mit Karte und Fotos zum Sichern, Drucken oder Senden. Drucken: für den Computer. Speichern: Sicherung als Datei (z.B. ins iCloud Drive).</p>
+    <p class="hinweis" style="margin-top:8px">PDF: Reisebuch zum Sichern oder Senden. Vorschau: zeigt das PDF Seite für Seite. Drucken: druckt dieselben Seiten. Speichern: Sicherung als Datei (z.B. ins iCloud Drive).</p>
     <h2>Vorschau</h2>
     <div id="berichtDruck"></div>
 
@@ -986,7 +991,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.10.2026 · 23:20";
+const APP_VERSION = "12.10.2026 · 23:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1827,7 +1832,7 @@ function initKarte() {
     return false;
   }
   karte = L.map("karte", { zoomControl: true });
-  L.tileLayer(KACHELN, { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende' }).addTo(karte);
+  L.tileLayer(KACHELN, { maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende' }).addTo(karte);
   karteEbene = L.layerGroup().addTo(karte);
   fotoEbene = L.layerGroup();
   // Mini-Fotos nur beim Hineinzoomen zeigen, sonst wird die Karte unruhig
@@ -2097,101 +2102,88 @@ async function statischeKarte(opt = {}) {
 // ── Bericht (Vorschau = Druck) ───────────────────────────────────────
 let berichtVeraltet = true;
 let berichtLauf = 0;
-
-async function renderBericht() {
-  berichtVeraltet = false;
-  const lauf = ++berichtLauf;
-  const ziel = document.getElementById("berichtDruck");
-  ziel.innerHTML = "";
-  const k = kennzahlen();
-  const r = daten.reise;
-
-  const deck = document.createElement("section");
-  deck.className = "seite deckblatt";
-  const h = document.createElement("h2");
-  h.textContent = reiseTitel();
-  deck.appendChild(h);
-  if (r.untertitel) {
-    const u = document.createElement("p");
-    u.className = "unter";
-    u.textContent = r.untertitel;
-    deck.appendChild(u);
-  }
-  const fakten = document.createElement("div");
-  fakten.className = "fakten";
-  const fakt = (wert, text) => {
-    const s = document.createElement("span");
-    const st = document.createElement("strong");
-    st.textContent = wert;
-    s.append(st, ` ${text}`);
-    fakten.appendChild(s);
-  };
-  if (r.start && r.ende) {
-    const s = document.createElement("span");
-    s.textContent = `${datumLang(r.start)} – ${datumLang(r.ende)}`;
-    fakten.appendChild(s);
-  }
-  fakt(k.tage, "Tage");
-  fakt(k.stationen, "Stationen");
-  fakt(k.fotos, "Fotos");
-  if (k.kmRoute + k.kmTracks > 0) fakt(formatZahlCH(k.kmRoute + k.kmTracks), "km");
-  deck.appendChild(fakten);
-  const fig = document.createElement("figure");
-  const platzhalter = document.createElement("div");
-  platzhalter.className = "karte-platzhalter";
-  platzhalter.textContent = k.stationen || daten.tracks.length ? "Karte wird erstellt …" : "Noch keine Stationen mit Kartenpunkt.";
-  fig.appendChild(platzhalter);
-  deck.appendChild(fig);
-  ziel.appendChild(deck);
-
-  for (const datum of tageMitEintraegen()) {
-    const seite = document.createElement("section");
-    seite.className = "seite";
-    const kopf = document.createElement("p");
-    kopf.className = "seite-kopf";
-    const kmTag = tagKm(datum);
-    kopf.textContent = `${tagLabel(datum)} · ${datumLang(datum)}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`;
-    seite.appendChild(kopf);
-    const nummern = subNummern();
-    for (const e of eintraegeAm(datum)) {
-      const block = document.createElement("div");
-      block.className = "eintrag-druck" + (istThema(e) ? "" : " sub");
-      if (e.titel || !istThema(e)) {
-        const h3 = document.createElement("h3");
-        h3.textContent = istThema(e) ? e.titel : `${nummern.get(e.id)} · ${e.titel || e.ort || "Sub-Thema"}`;
-        block.appendChild(h3);
-      }
-      const ortText = istThema(e) ? tagStrecke(datum) : e.ort;
-      if (ortText) { const o = document.createElement("p"); o.className = "ort"; o.textContent = ortText; block.appendChild(o); }
-      if (e.text) { const t = document.createElement("p"); t.className = "text"; t.textContent = e.text; block.appendChild(t); }
-      if (e.fotos.length) {
-        const f = document.createElement("div");
-        f.className = "fotos";
-        e.fotos.forEach(id => { const img = fotoImg(id); img.loading = "eager"; f.appendChild(img); });
-        block.appendChild(f);
-      }
-      seite.appendChild(block);
-    }
-    ziel.appendChild(seite);
-  }
-  ladeBilderIn(ziel);
-
-  if (k.stationen || daten.tracks.length) {
-    const bild = await statischeKarte();
-    if (lauf !== berichtLauf || !bild) return;
-    const img = document.createElement("img");
-    img.src = bild.url;
-    img.alt = "Karte der Reiseroute";
-    const cap = document.createElement("figcaption");
-    cap.textContent = `Route mit ${k.stationen} Station${k.stationen === 1 ? "" : "en"} · Karte ${KARTEN_QUELLE}`;
-    fig.replaceChildren(img, cap);
+// 12.10.2026: Die Vorschau ist das echte PDF -- erstellt mit derselben
+// Funktion wie "PDF" und Seite für Seite als Bild angezeigt (pdf.js).
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+function ladeSkript(src) {
+  return new Promise((ok, fehler) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => ok();
+    s.onerror = () => fehler(new Error("Die Vorschau braucht beim ersten Mal eine Internetverbindung."));
+    document.head.appendChild(s);
+  });
+}
+async function ladePdfJs() {
+  if (!window.pdfjsLib) await ladeSkript(PDFJS);
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    try {
+      const code = await (await fetch(PDFJS_WORKER)).text();
+      pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    } catch { pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; }
   }
 }
+function leereVorschau(ziel) {
+  ziel.querySelectorAll("img.pdf-seite").forEach(i => URL.revokeObjectURL(i.src));
+}
+// Ohne Knopfdruck nur ein Hinweis; eine alte Vorschau verfällt bei jeder Änderung
+function renderBericht() {
+  berichtVeraltet = false;
+  berichtLauf++;
+  const ziel = document.getElementById("berichtDruck");
+  leereVorschau(ziel);
+  ziel.innerHTML = '<p class="hinweis">Die Vorschau zeigt das PDF genau so, wie es erstellt wird. Tippe auf «👁 Vorschau».</p>';
+}
+async function zeigePdfVorschau() {
+  const lauf = ++berichtLauf;
+  berichtVeraltet = false;
+  const ziel = document.getElementById("berichtDruck");
+  const knopf = document.getElementById("vorschauBtn");
+  knopf.disabled = true;
+  const status = document.createElement("p");
+  status.className = "hinweis";
+  status.textContent = "Vorschau wird erstellt …";
+  leereVorschau(ziel);
+  ziel.replaceChildren(status);
+  try {
+    const blob = await erstellePdf(tageMitEintraegen(), true, t => { status.textContent = `Vorschau: ${t}`; }, reisebuchName());
+    status.textContent = "Vorschau wird gezeichnet …";
+    await ladePdfJs();
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    const breite = Math.min(1400, Math.max(600, Math.round(ziel.clientWidth * (window.devicePixelRatio || 1))));
+    const seiten = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (lauf !== berichtLauf) { seiten.forEach(s => URL.revokeObjectURL(s.src)); return; }
+      status.textContent = `Vorschau: Seite ${i} von ${pdf.numPages} …`;
+      const seite = await pdf.getPage(i);
+      const vp = seite.getViewport({ scale: breite / seite.getViewport({ scale: 1 }).width });
+      const c = document.createElement("canvas");
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      await seite.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+      const img = new Image();
+      img.className = "pdf-seite";
+      img.alt = `Seite ${i}`;
+      img.src = await new Promise(ok => c.toBlob(b => ok(URL.createObjectURL(b)), "image/jpeg", 0.86));
+      seiten.push(img);
+    }
+    pdf.destroy();
+    if (lauf !== berichtLauf) { seiten.forEach(s => URL.revokeObjectURL(s.src)); return; }
+    ziel.replaceChildren(...seiten);
+  } catch (fehler) {
+    status.textContent = fehler.message || "Die Vorschau konnte nicht erstellt werden.";
+    console.error(fehler);
+  } finally {
+    knopf.disabled = false;
+  }
+}
+document.getElementById("vorschauBtn").addEventListener("click", zeigePdfVorschau);
 
+// Drucken = die PDF-Seiten der Vorschau (gleich wie das PDF)
 document.getElementById("druckBtn").addEventListener("click", async () => {
-  if (berichtVeraltet) await renderBericht();
-  const bilder = [...document.querySelectorAll("#berichtDruck img")];
-  await ladeBilderIn(document.getElementById("berichtDruck"));
+  if (berichtVeraltet || !document.querySelector("#berichtDruck img.pdf-seite")) await zeigePdfVorschau();
+  const bilder = [...document.querySelectorAll("#berichtDruck img.pdf-seite")];
+  if (!bilder.length) return;
   await Promise.all(bilder.map(img => (img.decode ? img.decode().catch(() => {}) : null)));
   window.print();
 });

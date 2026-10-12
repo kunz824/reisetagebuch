@@ -1,8 +1,8 @@
 // Service Worker Reisetagebuch (11.10.2026): App und Bibliotheken für
 // den Offline-Betrieb unterwegs zwischenspeichern. Kartenkacheln, die
 // einmal angesehen wurden, bleiben ebenfalls verfügbar.
-const APP_CACHE = "reisetagebuch-app-v3";
-const KACHEL_CACHE = "reisetagebuch-kacheln-v2";
+const APP_CACHE = "reisetagebuch-app-v4";
+const KACHEL_CACHE = "reisetagebuch-kacheln-v3";
 const APP_DATEIEN = [
   "./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
@@ -45,10 +45,15 @@ self.addEventListener("fetch", ev => {
   }
   // Kartenkacheln: Cache zuerst, sonst laden und merken
   if (url.hostname === "tile.openstreetmap.org") {
-    ev.respondWith(caches.open(KACHEL_CACHE).then(c => c.match(req).then(r => r || fetch(req).then(n => {
-      if (n.ok || n.type === "opaque") c.put(req, n.clone());
-      return n;
-    }))));
+    // Nur CORS-fähige Antworten merken: eine "opaque" Kachel blockiert sonst
+    // die gezeichneten Karten (PDF, WhatsApp-Titelkarte) -> leere Karte.
+    ev.respondWith(caches.open(KACHEL_CACHE).then(c => c.match(req).then(r => {
+      if (r && r.type !== "opaque") return r;
+      return fetch(req.mode === "no-cors" ? new Request(req.url, { mode: "cors" }) : req).then(n => {
+        if (n.ok && n.type !== "opaque") c.put(req.url, n.clone());
+        return n;
+      }).catch(() => r || fetch(req));
+    })));
   }
   // Ortssuche (Nominatim) läuft immer über das Netz
 });
