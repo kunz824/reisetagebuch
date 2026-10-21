@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tagebuch">
-<meta name="theme-color" content="#1b2029">
+<meta name="theme-color" content="#10141b">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -50,7 +50,7 @@
   html, body { height: 100%; overscroll-behavior: none; }
   /* Fläche unterhalb der App (iOS lässt dort teils einen Streifen frei)
      in der Farbe der Tabbar, damit die Leiste bis ganz unten reicht. */
-  html { background: #1b2029; }
+  html { background: var(--bg); }
   #statusAbdeckung { flex: none; height: env(safe-area-inset-top, 0px); background: var(--bg); }
   #scroller {
     position: relative;
@@ -424,8 +424,23 @@
   .formular-meldung.ok { color: var(--pos); }
 
   .foto-raster { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .foto-kachel { position: relative; aspect-ratio: 1; max-width: 100%; }
-  .foto-kachel img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: var(--bg-panel-2); display: block; }
+  .foto-kachel { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .foto-bild { position: relative; aspect-ratio: 1; max-width: 100%; }
+  .foto-text {
+    width: 100%;
+    min-width: 0;
+    height: 30px;
+    padding: 0 7px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 16px;   /* iPhone zoomt sonst beim Tippen */
+    transform-origin: left center;
+  }
+  .foto-text::placeholder { color: var(--text-dim); opacity: 0.7; }
+  .foto-bild img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: var(--bg-panel-2); display: block; }
   .titel-schalter {
     position: absolute;
     left: 4px;
@@ -692,6 +707,12 @@
     justify-content: center;
   }
   #lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  #lbText {
+    position: absolute; left: 16px; right: 16px;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    margin: 0; text-align: center; color: #fff; font-size: 14px; font-style: italic;
+    text-shadow: 0 1px 4px rgba(0,0,0,.8); pointer-events: none;
+  }
   #lightbox button {
     position: absolute;
     background: rgba(40, 44, 52, 0.75);
@@ -960,6 +981,7 @@
 
 <div id="lightbox" hidden>
   <img id="lbBild" alt="">
+  <p id="lbText" hidden></p>
   <button type="button" id="lbZurueck" aria-label="Vorheriges Foto">‹</button>
   <button type="button" id="lbVor" aria-label="Nächstes Foto">›</button>
   <button type="button" id="lbZu" aria-label="Schliessen">✕</button>
@@ -991,7 +1013,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.10.2026 · 23:45";
+const APP_VERSION = "21.10.2026 · 14:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1100,6 +1122,8 @@ function normalisiere(roh) {
   d.tracks = Array.isArray(d.tracks) ? d.tracks : [];
   d.meta = Object.assign({ geaendert: "", letzteSicherung: "" }, d.meta || {});
   d.titelFotos = Array.isArray(d.titelFotos) ? d.titelFotos : [];   // Fotos für die Titelseite
+  // 21.10.2026: Beschriftung je Foto {fotoId: "Text"}
+  d.fotoTexte = d.fotoTexte && typeof d.fotoTexte === "object" ? d.fotoTexte : {};
   return d;
 }
 let daten = leereDaten();
@@ -1447,7 +1471,7 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, art: "auto", fotos: [], titel: new Set(), neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
 // Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
@@ -1497,6 +1521,7 @@ function neuerEintragAm(datum) {
 function formularLeeren() {
   form.id = null;
   form.titel = new Set();
+  form.texte = new Map();
   form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
@@ -1527,6 +1552,7 @@ function bearbeiteEintrag(id) {
     form.art = e.art;
     form.fotos = [...e.fotos];
     form.titel = new Set(e.fotos.filter(id => daten.titelFotos.includes(id)));
+    form.texte = new Map(e.fotos.filter(id => daten.fotoTexte[id]).map(id => [id, daten.fotoTexte[id]]));
     form.neu = new Set();
     form.entfernt = new Set();
     form.lat = Number.isFinite(e.lat) ? e.lat : null;
@@ -1571,6 +1597,7 @@ function renderFormFotos() {
     weg.addEventListener("click", async () => {
       form.fotos = form.fotos.filter(x => x !== id);
       form.titel.delete(id);
+      form.texte.delete(id);
       if (form.neu.has(id)) { form.neu.delete(id); await loescheFoto(id); }
       else form.entfernt.add(id);
       renderFormFotos();
@@ -1585,7 +1612,22 @@ function renderFormFotos() {
       form.titel.has(id) ? form.titel.delete(id) : form.titel.add(id);
       renderFormFotos();
     });
-    kachel.append(img, weg, stern);
+    const bild = document.createElement("div");
+    bild.className = "foto-bild";
+    bild.append(img, weg, stern);
+    // Beschriftung (erscheint dezent im PDF und auf den WhatsApp-Karten)
+    const text = document.createElement("input");
+    text.type = "text";
+    text.className = "foto-text";
+    text.maxLength = 80;
+    text.placeholder = "Beschriftung";
+    text.value = form.texte.get(id) || "";
+    text.setAttribute("aria-label", "Beschriftung des Fotos");
+    text.addEventListener("input", () => {
+      const t = text.value.trim();
+      t ? form.texte.set(id, t) : form.texte.delete(id);
+    });
+    kachel.append(bild, text);
     raster.appendChild(kachel);
   });
   const hinzu = document.createElement("label");
@@ -1777,6 +1819,8 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
   const alleDiese = new Set([...(bisher ? bisher.fotos : []), ...form.fotos, ...form.entfernt]);
   daten.titelFotos = daten.titelFotos.filter(id => !alleDiese.has(id))
     .concat(eintrag.fotos.filter(id => form.titel.has(id)));
+  for (const id of alleDiese) delete daten.fotoTexte[id];
+  for (const id of eintrag.fotos) if (form.texte.get(id)) daten.fotoTexte[id] = form.texte.get(id);
   for (const id of form.entfernt) await loescheFoto(id);
   form.neu = new Set();
   form.entfernt = new Set();
@@ -1794,6 +1838,7 @@ zweistufig(feld("eintragLoeschen"), "Wirklich löschen? Nochmals tippen", async 
   if (e) {
     for (const id of new Set([...e.fotos, ...form.fotos])) await loescheFoto(id);
     daten.titelFotos = daten.titelFotos.filter(id => !e.fotos.includes(id));
+    for (const id of e.fotos) delete daten.fotoTexte[id];
     daten.eintraege = daten.eintraege.filter(x => x.id !== e.id);
   }
   await formularVerwerfen();
@@ -2222,8 +2267,39 @@ const DRUCK = {
   tinte: [35, 38, 44], grau: [122, 116, 102], gold: [181, 131, 42], goldHell: [212, 162, 78],
   linie: [228, 222, 210], papier: [251, 250, 247], nacht: [16, 20, 27], weiss: [255, 255, 255],
 };
-// Foto passend zuschneiden (wie "cover"), Auflösung ca. 190 dpi
-async function bildAusschnitt(id, wmm, hmm) {
+// 21.10.2026: Beschriftung eines Fotos. Dezent unten links im Bild, auf
+// einem leichten Verlauf. Titelfotos auf der Titelseite bleiben ohne Text.
+function fotoText(id) { return (daten.fotoTexte && daten.fotoTexte[id]) || ""; }
+function zeichneBildunterschrift(g, text, x, y, w, h, px, rad = 0) {
+  if (!text) return;
+  g.save();
+  g.beginPath();
+  rad && g.roundRect ? g.roundRect(x, y, w, h, rad) : g.rect(x, y, w, h);
+  g.clip();
+  const band = Math.round(px * 2.6);
+  const verlauf = g.createLinearGradient(0, y + h - band, 0, y + h);
+  verlauf.addColorStop(0, "rgba(0,0,0,0)");
+  verlauf.addColorStop(1, "rgba(0,0,0,0.5)");
+  g.fillStyle = verlauf;
+  g.fillRect(x, y + h - band, w, band);
+  g.font = `italic ${px}px Arial, "Helvetica Neue", Helvetica, sans-serif`;
+  g.textAlign = "left";
+  g.textBaseline = "alphabetic";
+  let t = String(text);
+  const max = w - px * 1.4;
+  if (g.measureText(t).width > max) {
+    while (t.length > 1 && g.measureText(t + "…").width > max) t = t.slice(0, -1);
+    t = t.trimEnd() + "…";
+  }
+  g.shadowColor = "rgba(0,0,0,0.45)";
+  g.shadowBlur = px * 0.3;
+  g.fillStyle = "rgba(255,255,255,0.94)";
+  g.fillText(t, x + px * 0.7, y + h - px * 0.7);
+  g.restore();
+}
+// Foto passend zuschneiden (wie "cover"), Auflösung ca. 190 dpi.
+// text = Beschriftung (leer = ohne, z.B. auf der Titelseite)
+async function bildAusschnitt(id, wmm, hmm, text = "") {
   const rec = await idb.get("fotos", id);
   if (!rec) return null;
   let bild;
@@ -2236,6 +2312,7 @@ async function bildAusschnitt(id, wmm, hmm) {
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
   c.getContext("2d").drawImage(bild, (bild.width - sw) / 2, (bild.height - sh) / 2, sw, sh, 0, 0, W, H);
+  zeichneBildunterschrift(c.getContext("2d"), text, 0, 0, W, H, Math.round(2.4 * dpmm));
   return c.toDataURL("image/jpeg", 0.84);
 }
 
@@ -2468,13 +2545,13 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         y += 1;
         if (z.drei) {
           const gb = (B - L) * 0.64, kb = B - L - gb, kh = (z.h - L) / 2;
-          const [u0, u1, u2] = await Promise.all([bildAusschnitt(e.fotos[0], gb, z.h), bildAusschnitt(e.fotos[1], kb, kh), bildAusschnitt(e.fotos[2], kb, kh)]);
+          const [u0, u1, u2] = await Promise.all([bildAusschnitt(e.fotos[0], gb, z.h, fotoText(e.fotos[0])), bildAusschnitt(e.fotos[1], kb, kh, fotoText(e.fotos[1])), bildAusschnitt(e.fotos[2], kb, kh, fotoText(e.fotos[2]))]);
           if (u0) doc.addImage(u0, "JPEG", R, y, gb, z.h);
           if (u1) doc.addImage(u1, "JPEG", R + gb + L, y, kb, kh);
           if (u2) doc.addImage(u2, "JPEG", R + gb + L, y + kh + L, kb, kh);
           fi += 3;
         } else {
-          const urls = await Promise.all(z.felder.map((f, j) => bildAusschnitt(e.fotos[fi + j], f[1], z.h)));
+          const urls = await Promise.all(z.felder.map((f, j) => bildAusschnitt(e.fotos[fi + j], f[1], z.h, fotoText(e.fotos[fi + j]))));
           z.felder.forEach((f, j) => { if (urls[j]) doc.addImage(urls[j], "JPEG", R + f[0], y, f[1], z.h); });
           fi += z.felder.length;
         }
@@ -2667,7 +2744,8 @@ async function erstellePostkarte(e, nr, datum) {
   mess.font = `34px ${PK.serif}`;
   const textZ = umbrechen(mess, e.text, W);
   const fotos = e.fotos.slice(0, 4);
-  const bilder = (await Promise.all(fotos.map(ladeFotoBild))).filter(Boolean);
+  const paare = (await Promise.all(fotos.map(async id => [id, await ladeFotoBild(id)]))).filter(p => p[1]);
+  const bilder = paare.map(p => p[1]);
   const felder = collageFelder(bilder.length, W);
   const collageH = bilder.length ? Math.max(...felder.map(f => f[1] + f[3])) : 0;
 
@@ -2700,7 +2778,12 @@ async function erstellePostkarte(e, nr, datum) {
   // Fotos
   if (bilder.length) {
     y += 40;
-    bilder.forEach((bild, i) => zeichneCover(g, bild, R + felder[i][0], y + felder[i][1], felder[i][2], felder[i][3]));
+    bilder.forEach((bild, i) => {
+      const [fx, fy, fw, fh] = felder[i];
+      zeichneCover(g, bild, R + fx, y + fy, fw, fh);
+      // Beschriftung (nicht auf dem "+N"-Feld)
+      if (!(e.fotos.length > 4 && i === 3)) zeichneBildunterschrift(g, fotoText(paare[i][0]), R + fx, y + fy, fw, fh, 26, 14);
+    });
     if (e.fotos.length > 4) {
       const f = felder[3];
       g.fillStyle = "rgba(16,20,27,0.55)"; g.beginPath();
@@ -2934,6 +3017,11 @@ async function zeigeLbFoto() {
   const img = document.getElementById("lbBild");
   img.removeAttribute("src");
   img.src = await fotoUrl(lbListe[lbIndex], "voll") || "";
+  const id = lbListe[lbIndex];
+  const t = (lbListe === form.fotos ? form.texte.get(id) : "") || fotoText(id);
+  const lt = document.getElementById("lbText");
+  lt.textContent = t;
+  lt.hidden = !t;
   document.getElementById("lbZurueck").hidden = lbListe.length < 2;
   document.getElementById("lbVor").hidden = lbListe.length < 2;
 }
