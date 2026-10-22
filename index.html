@@ -1013,7 +1013,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "21.10.2026 · 14:00";
+const APP_VERSION = "22.10.2026 · 21:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2728,13 +2728,25 @@ function collageFelder(n, W) {
   if (n === 1) return [[0, 0, W, Math.round(W * 0.72)]];
   if (n === 2) return [[0, 0, halb, 420], [halb + L, 0, halb, 420]];
   if (n === 3) return [[0, 0, W, 560], [0, 560 + L, halb, 380], [halb + L, 560 + L, halb, 380]];
-  return [[0, 0, halb, 400], [halb + L, 0, halb, 400], [0, 400 + L, halb, 400], [halb + L, 400 + L, halb, 400]];
+  if (n === 4) return [[0, 0, halb, 400], [halb + L, 0, halb, 400], [0, 400 + L, halb, 400], [halb + L, 400 + L, halb, 400]];
+  // 22.10.2026: bis 6 Fotos pro Karte (5 = gross + 2x2, 6 = 2x3)
+  if (n === 5) {
+    const o = 560 + L;
+    return [[0, 0, W, 560], [0, o, halb, 380], [halb + L, o, halb, 380], [0, o + 380 + L, halb, 380], [halb + L, o + 380 + L, halb, 380]];
+  }
+  return [0, 1, 2, 3, 4, 5].map(i => [(i % 2) * (halb + L), Math.floor(i / 2) * (400 + L), halb, 400]);
 }
 function canvasZuDatei(c, name) {
   return new Promise(ok => c.toBlob(b => ok(new File([b], name, { type: "image/jpeg" })), "image/jpeg", 0.88));
 }
 
-async function erstellePostkarte(e, nr, datum) {
+// 22.10.2026: ALLE Fotos werden geteilt. Bis 6 Fotos auf der Karte mit dem
+// Text, weitere Fotos auf Folgekarten (je 6) mit Nummer und Titel.
+const FOTOS_PRO_KARTE = 6;
+function postkartenTeile(e) { return Math.max(1, Math.ceil(e.fotos.length / FOTOS_PRO_KARTE)); }
+async function erstellePostkarte(e, nr, datum, teil = 0) {
+  const teile = postkartenTeile(e);
+  const folge = teil > 0;   // Folgekarte: nur Kopf und Fotos
   const { B, R } = PK, W = B - 2 * R;
   const mess = document.createElement("canvas").getContext("2d");
   mess.font = `700 34px ${PK.sans}`;
@@ -2742,14 +2754,15 @@ async function erstellePostkarte(e, nr, datum) {
   mess.font = `600 52px ${PK.sans}`;
   const titelZ = umbrechen(mess, e.titel || e.ort || "Sub-Thema", W - pillB - 24);
   mess.font = `34px ${PK.serif}`;
-  const textZ = umbrechen(mess, e.text, W);
-  const fotos = e.fotos.slice(0, 4);
+  const textZ = folge ? [] : umbrechen(mess, e.text, W);
+  const zeigeOrt = !folge && e.ort;
+  const fotos = e.fotos.slice(teil * FOTOS_PRO_KARTE, (teil + 1) * FOTOS_PRO_KARTE);
   const paare = (await Promise.all(fotos.map(async id => [id, await ladeFotoBild(id)]))).filter(p => p[1]);
   const bilder = paare.map(p => p[1]);
   const felder = collageFelder(bilder.length, W);
   const collageH = bilder.length ? Math.max(...felder.map(f => f[1] + f[3])) : 0;
 
-  let H = R + 40 + 24 + titelZ.length * 62 + (e.ort ? 50 : 0) + 20 + textZ.length * 50 + (bilder.length ? 40 + collageH : 0) + R;
+  let H = R + 40 + 24 + titelZ.length * 62 + (zeigeOrt ? 50 : 0) + 20 + textZ.length * 50 + (bilder.length ? (textZ.length ? 40 : 10) + collageH : 0) + R;
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
@@ -2758,7 +2771,7 @@ async function erstellePostkarte(e, nr, datum) {
   let y = R + 10;
   // Kopfzeile
   g.fillStyle = PK.grau; g.font = `600 26px ${PK.sans}`; g.textBaseline = "alphabetic";
-  g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}`.toUpperCase(), R, y + 20);
+  g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}${teile > 1 ? ` · Fotos ${teil + 1}/${teile}` : ""}`.toUpperCase(), R, y + 20);
   y += 54;
   // Nummer + Titel
   // Nummer als Pille, z.B. "3.1" (wie im PDF)
@@ -2770,28 +2783,19 @@ async function erstellePostkarte(e, nr, datum) {
   g.textAlign = "left"; g.fillStyle = PK.tinte; g.font = `600 52px ${PK.sans}`;
   titelZ.forEach((z, i) => g.fillText(z, R + pillB + 24, y + 44 + i * 62));
   y += titelZ.length * 62 + 4;
-  if (e.ort) { g.fillStyle = PK.grau; g.font = `30px ${PK.sans}`; g.fillText(`📍 ${e.ort}`, R + pillB + 24, y + 30); y += 50; }
+  if (zeigeOrt) { g.fillStyle = PK.grau; g.font = `30px ${PK.sans}`; g.fillText(`📍 ${e.ort}`, R + pillB + 24, y + 30); y += 50; }
   y += 20;
   // Text
   g.fillStyle = PK.tinte; g.font = `34px ${PK.serif}`;
   textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
   // Fotos
   if (bilder.length) {
-    y += 40;
+    y += textZ.length ? 40 : 10;
     bilder.forEach((bild, i) => {
       const [fx, fy, fw, fh] = felder[i];
       zeichneCover(g, bild, R + fx, y + fy, fw, fh);
-      // Beschriftung (nicht auf dem "+N"-Feld)
-      if (!(e.fotos.length > 4 && i === 3)) zeichneBildunterschrift(g, fotoText(paare[i][0]), R + fx, y + fy, fw, fh, 26, 14);
+      zeichneBildunterschrift(g, fotoText(paare[i][0]), R + fx, y + fy, fw, fh, 26, 14);
     });
-    if (e.fotos.length > 4) {
-      const f = felder[3];
-      g.fillStyle = "rgba(16,20,27,0.55)"; g.beginPath();
-      g.roundRect ? g.roundRect(R + f[0], y + f[1], f[2], f[3], 14) : g.rect(R + f[0], y + f[1], f[2], f[3]); g.fill();
-      g.fillStyle = "#fff"; g.font = `700 72px ${PK.sans}`; g.textAlign = "center";
-      g.fillText(`+${e.fotos.length - 4}`, R + f[0] + f[2] / 2, y + f[1] + f[3] / 2 + 26);
-      g.textAlign = "left";
-    }
     y += collageH;
   }
   return c;   // ohne Fusszeile (12.10.2026)
@@ -2898,8 +2902,10 @@ async function oeffneDialogTage(tage) {
       const subs = eintraegeAm(datum).filter(e => !istThema(e));
       for (let i = 0; i < subs.length; i++) {
         dialogStatus(`Postkarte ${i + 1} von ${subs.length} (${tagLabel(datum)}) …`);
-        const kc = await erstellePostkarte(subs[i], nummern.get(subs[i].id), datum);
-        karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}.jpg`));
+        for (let teil = 0; teil < postkartenTeile(subs[i]); teil++) {
+          const kc = await erstellePostkarte(subs[i], nummern.get(subs[i].id), datum, teil);
+          karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}${teil ? `-${teil + 1}` : ""}.jpg`));
+        }
       }
     }
   } catch (fehler) {
