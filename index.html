@@ -951,21 +951,12 @@
 
   <!-- ── Register 3: Route ─────────────────────────────────────────── -->
   <section id="register-route" class="register">
-    <div class="stats-reihe" style="--spalten:3;">
+    <div class="stats-reihe" style="--spalten:2;">
       <div class="stat"><p class="label">Stationen</p><p class="zahl" id="rStationen">–</p></div>
-      <div class="stat"><p class="label">km Luftlinie</p><p class="zahl" id="rKm">–</p></div>
-      <div class="stat"><p class="label">km Tracks</p><p class="zahl" id="rTrackKm">–</p></div>
+      <div class="stat"><p class="label">Kilometer</p><p class="zahl" id="rKm">–</p></div>
     </div>
     <div id="karte" style="margin-top:6px"></div>
-    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag, die Nummern sind die Sub-Themen. Gold durchgezogen: geplante Route (Haupteintrag). Gestrichelt: Luftlinie. Blau: aufgezeichnete Tracks.</p>
-
-    <h2>Tracks (GPX)</h2>
-    <div class="liste" id="trackListe"></div>
-    <div class="knopf-reihe" style="margin-top:8px">
-      <label class="btn-abbrechen" for="gpxInput" style="cursor:pointer">＋ GPX-Datei laden</label>
-    </div>
-    <input type="file" id="gpxInput" class="unsichtbar" accept=".gpx,application/gpx+xml,application/xml,text/xml">
-    <p class="formular-meldung" id="gpxMeldung" hidden></p>
+    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag, die Nummern sind die Sub-Themen. Gold durchgezogen: geplante Route. Gestrichelt: Luftlinie (Tage ohne Routenplanung).</p>
   </section>
 
   <!-- ── Register 4: Bericht ───────────────────────────────────────── -->
@@ -1061,7 +1052,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "27.10.2026 · 22:45";
+const APP_VERSION = "27.10.2026 · 23:15";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1271,8 +1262,7 @@ function kennzahlen() {
     tage: anzahlReisetage(),
     eintraege: daten.eintraege.length,
     fotos: daten.eintraege.reduce((s, e) => s + e.fotos.length, 0),
-    kmRoute: streckeKm(st.map(e => [e.lat, e.lon])),
-    kmTracks: daten.tracks.reduce((s, t) => s + (t.km || 0), 0),
+    kmRoute: tageMitEintraegen().reduce((s, d) => s + tagKm(d), 0),   // Routenplanung bzw. Luftlinie je Tag
     stationen: st.filter(p => !p.ziel && !p.start).length,
   };
 }
@@ -1360,13 +1350,11 @@ function renderAlles() {
   document.getElementById("sTage").textContent = k.tage || "–";
   document.getElementById("sEintraege").textContent = k.eintraege;
   document.getElementById("sFotos").textContent = k.fotos;
-  document.getElementById("sKm").textContent = formatZahlCH(k.kmRoute + k.kmTracks);
+  document.getElementById("sKm").textContent = formatZahlCH(k.kmRoute);
   document.getElementById("rStationen").textContent = k.stationen;
   document.getElementById("rKm").textContent = formatZahlCH(k.kmRoute);
-  document.getElementById("rTrackKm").textContent = formatZahlCH(k.kmTracks);
 
   renderTagebuch();
-  renderTracks();
   renderSicherungsInfo();
   for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende], ["rSpeicherort", r.speicherort]]) {
     const el = document.getElementById(id);
@@ -1818,8 +1806,9 @@ function zeichneRoutenKarte() {
     L.marker([v.lat, v.lon], { icon: L.divIcon({ className: "", html: `<div class="via-marker">${i + 1}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) })
       .bindTooltip(v.name || `Zwischenziel ${i + 1}`).addTo(routenEbene);
   });
-  if (start) punkt(start, "#e0785a", 7).bindTooltip("Start");
-  if (ziel) punkt(ziel, "#e0785a", 7).bindTooltip("Ziel");
+  const gleich = start && ziel && km(start, ziel) < 0.3;
+  if (start) L.marker(start, { icon: startZielIcon(true, gleich), zIndexOffset: 200 }).bindTooltip("Start").addTo(routenEbene);
+  if (ziel && !gleich) L.marker(ziel, { icon: startZielIcon(false, true), zIndexOffset: 200 }).bindTooltip("Ziel").addTo(routenEbene);
   if (grenzen.length > 1) routenKarte.fitBounds(grenzen, { padding: [24, 24], maxZoom: 13 });
   else if (grenzen.length === 1) routenKarte.setView(grenzen[0], 11);
   else routenKarte.setView([46.8, 8.2], 6);
@@ -2167,7 +2156,49 @@ function zweistufig(btn, frage, aktion) {
   });
 }
 
-// ── Route: Karte + GPX ───────────────────────────────────────────────
+// Leaflet-Symbole für Start (Stecknadel) und Ziel (Zielfahne)
+const NADEL_SVG = '<svg width="26" height="36" viewBox="0 0 26 36" aria-hidden="true"><path d="M13 35C13 35 2 21 2 13a11 11 0 0 1 22 0c0 8-11 22-11 22z" fill="#e0785a" stroke="#10141b" stroke-width="2"/><circle cx="13" cy="13" r="4.5" fill="#fff"/></svg>';
+const FAHNE_SVG = (() => {
+  let q = "";
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) if ((i + j) % 2 === 0) q += `<rect x="${6 + i * 5}" y="${3 + j * 5}" width="5" height="5" fill="#10141b"/>`;
+  return `<svg width="28" height="36" viewBox="0 0 28 36" aria-hidden="true"><rect x="6" y="3" width="20" height="15" fill="#fff" stroke="#10141b" stroke-width="1.2"/>${q}<rect x="3" y="1.5" width="3" height="33.5" rx="1.2" fill="#e7e6e2" stroke="#10141b" stroke-width="1"/></svg>`;
+})();
+function startZielIcon(start, ziel, belegt = false) {
+  if (start && ziel) {
+    return L.divIcon({ className: "karte-nadel", html: `<div style="display:flex;align-items:flex-end;gap:1px">${NADEL_SVG}${FAHNE_SVG}</div>`, iconSize: [55, 36], iconAnchor: belegt ? [62, 35] : [13, 35] });
+  }
+  if (ziel) return L.divIcon({ className: "karte-nadel", html: FAHNE_SVG, iconSize: [28, 36], iconAnchor: belegt ? [34, 35] : [4, 35] });
+  return L.divIcon({ className: "karte-nadel", html: NADEL_SVG, iconSize: [26, 36], iconAnchor: belegt ? [34, 35] : [13, 35] });
+}
+// Canvas-Varianten für PDF und WhatsApp-Karten (Spitze bzw. Mastfuss am Punkt)
+function zeichneNadel(g, x, y, s = 1) {
+  g.save(); g.translate(x, y); g.scale(s, s);
+  g.beginPath();
+  g.moveTo(0, 0);
+  g.bezierCurveTo(-5, -12, -15, -20, -15, -31);
+  g.arc(0, -31, 15, Math.PI, 0, false);
+  g.bezierCurveTo(15, -20, 5, -12, 0, 0);
+  g.closePath();
+  g.fillStyle = "#e0785a"; g.fill();
+  g.lineWidth = 3; g.strokeStyle = "#ffffff"; g.stroke();
+  g.beginPath(); g.arc(0, -31, 5.5, 0, Math.PI * 2); g.fillStyle = "#ffffff"; g.fill();
+  g.restore();
+}
+function zeichneFahne(g, x, y, s = 1) {
+  g.save(); g.translate(x, y); g.scale(s, s);
+  const fx = 2, fy = -46, q = 8;
+  g.fillStyle = "#ffffff"; g.fillRect(fx - 1.5, fy - 1.5, 4 * q + 3, 3 * q + 3);   // weisser Rand
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) {
+    g.fillStyle = (i + j) % 2 ? "#ffffff" : "#1a1d22";
+    g.fillRect(fx + i * q, fy + j * q, q, q);
+  }
+  g.fillStyle = "#ffffff"; g.fillRect(-3.5, -50, 7, 50);   // Mast mit Rand
+  g.fillStyle = "#23262c"; g.fillRect(-2, -48.5, 4, 48.5);
+  g.beginPath(); g.arc(0, 0, 4, 0, Math.PI * 2); g.fillStyle = "#23262c"; g.fill();
+  g.restore();
+}
+
+// ── Route: Karte ─────────────────────────────────────────────────────
 let karte = null, karteEbene = null, fotoEbene = null;
 const FOTO_ZOOM = 8;   // ab dieser Zoomstufe erscheinen die Mini-Fotos
 let subMarker = [];    // [{p, nummer, foto, html}] für die Anordnung je Zoomstufe
@@ -2196,13 +2227,12 @@ function zeichneKarte() {
   karteEbene.clearLayers();
   fotoEbene.clearLayers();
   const grenzen = [];
-  for (const t of daten.tracks) {
-    L.polyline(t.punkte, { color: "#5aa9bb", weight: 3, opacity: 0.9 }).bindPopup(t.name).addTo(karteEbene);
-    t.punkte.forEach(p => grenzen.push(p));
-  }
   const st = stationen();
-  if (st.length > 1) {
-    L.polyline(st.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.55 }).addTo(karteEbene);
+  // Luftlinie nur für Tage ohne Routenplanung
+  for (const datum of tageMitEintraegen()) {
+    if (tagesLinie(datum)) continue;
+    const pk = tagesPunkte(datum);
+    if (pk.length > 1) L.polyline(pk.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.7 }).addTo(karteEbene);
   }
   // 27.10.2026: geplante Strecken der Tage (Strasse/Weg) durchgezogen
   for (const datum of tageMitEintraegen()) {
@@ -2216,18 +2246,20 @@ function zeichneKarte() {
   // 11.10.2026: Haupteintrag (Start/Ziel) = eine Stecknadel, Sub-Themen = Nummer.
   // Fallen Start und Ziel auf denselben Ort (z.B. Ziel von Tag 2 = Start von
   // Tag 3), erscheint nur eine Stecknadel, im Popup stehen beide Angaben.
+  // 27.10.2026: Start = Stecknadel, Ziel = Zielfahne. Am selben Ort (Ziel
+  // von Tag 2 = Start von Tag 3) stehen beide Symbole nebeneinander.
   const nadeln = [];
   for (const e of st.filter(p => p.start || p.ziel)) {
-    const label = `${e.ziel ? "Ziel" : "Start"} ${tagLabel(e.datum)}: ${e.ort || ""}`;
+    const label = `${e.ziel ? "🏁 Ziel" : "📍 Start"} ${tagLabel(e.datum)}: ${e.ort || ""}`;
     const da = nadeln.find(n => km([n.lat, n.lon], [e.lat, e.lon]) < 0.3);
-    if (da) da.labels.push(label); else nadeln.push({ lat: e.lat, lon: e.lon, labels: [label] });
+    if (da) { da.labels.push(label); da[e.ziel ? "ziel" : "start"] = true; }
+    else nadeln.push({ lat: e.lat, lon: e.lon, labels: [label], start: !!e.start, ziel: !!e.ziel });
   }
-  const nadelSvg = '<svg width="26" height="36" viewBox="0 0 26 36" aria-hidden="true"><path d="M13 35C13 35 2 21 2 13a11 11 0 0 1 22 0c0 8-11 22-11 22z" fill="#e0785a" stroke="#10141b" stroke-width="2"/><circle cx="13" cy="13" r="4.5" fill="#10141b"/></svg>';
   const subPunkte = st.filter(p => !p.start && !p.ziel);
   for (const n of nadeln) {
-    // Liegt an derselben Stelle ein nummerierter Punkt, Nadel links daneben setzen
+    // Liegt an derselben Stelle ein nummerierter Punkt, Symbol links daneben setzen
     const belegt = subPunkte.some(p => km([p.lat, p.lon], [n.lat, n.lon]) < 0.3);
-    const icon = L.divIcon({ className: "karte-nadel", html: nadelSvg, iconSize: [26, 36], iconAnchor: belegt ? [34, 35] : [13, 35] });
+    const icon = startZielIcon(n.start, n.ziel, belegt);
     const inhalt = document.createElement("div");
     n.labels.forEach((t, i) => { if (i) inhalt.appendChild(document.createElement("br")); inhalt.append(t); });
     L.marker([n.lat, n.lon], { icon, zIndexOffset: 200 }).bindPopup(inhalt).addTo(karteEbene);
@@ -2291,73 +2323,6 @@ function ordneSubMarker() {
   }
 }
 
-function renderTracks() {
-  const liste = document.getElementById("trackListe");
-  liste.innerHTML = "";
-  if (!daten.tracks.length) {
-    liste.innerHTML = '<p class="hinweis">Noch keine Tracks. Eine GPX-Datei (z.B. aus Komoot, Strava oder der Uhr) zeigt die gefahrene oder gewanderte Strecke.</p>';
-    return;
-  }
-  for (const t of daten.tracks) {
-    const z = document.createElement("div");
-    z.className = "listen-zeile";
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = t.name;
-    const zusatz = document.createElement("span");
-    zusatz.className = "zusatz";
-    zusatz.textContent = `${formatZahlCH(t.km || 0, 1)} km`;
-    const weg = document.createElement("button");
-    weg.type = "button";
-    weg.className = "btn-loeschen";
-    weg.textContent = "✕";
-    let timer;
-    weg.addEventListener("click", () => {
-      if (weg.classList.contains("bestaetigen")) {
-        daten.tracks = daten.tracks.filter(x => x.id !== t.id);
-        speichere();
-        return;
-      }
-      weg.classList.add("bestaetigen");
-      weg.textContent = "Löschen?";
-      clearTimeout(timer);
-      timer = setTimeout(() => { weg.classList.remove("bestaetigen"); weg.textContent = "✕"; }, 3500);
-    });
-    z.append(name, zusatz, weg);
-    liste.appendChild(z);
-  }
-}
-
-document.getElementById("gpxInput").addEventListener("change", async (ev) => {
-  const datei = ev.target.files[0];
-  ev.target.value = "";
-  const meldung = document.getElementById("gpxMeldung");
-  meldung.hidden = false;
-  meldung.className = "formular-meldung";
-  if (!datei) return;
-  try {
-    const xml = new DOMParser().parseFromString(await datei.text(), "application/xml");
-    let punkte = [...xml.querySelectorAll("trkpt, rtept")]
-      .map(n => [Number(n.getAttribute("lat")), Number(n.getAttribute("lon"))])
-      .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-    if (punkte.length < 2) { meldung.textContent = "In dieser Datei wurde kein Track gefunden."; return; }
-    const laenge = streckeKm(punkte);
-    // Auf höchstens 1500 Punkte ausdünnen, damit der Speicher klein bleibt
-    const schritt = Math.ceil(punkte.length / 1500);
-    if (schritt > 1) punkte = punkte.filter((_, i) => i % schritt === 0 || i === punkte.length - 1);
-    punkte = punkte.map(p => [Number(p[0].toFixed(5)), Number(p[1].toFixed(5))]);
-    const nameEl = xml.querySelector("trk > name, rte > name, metadata > name");
-    const name = (nameEl && nameEl.textContent.trim()) || datei.name.replace(/\.gpx$/i, "");
-    daten.tracks.push({ id: neueId(), name, punkte, km: Number(laenge.toFixed(2)) });
-    meldung.className = "formular-meldung ok";
-    meldung.textContent = `Track „${name}“ geladen (${formatZahlCH(laenge, 1)} km).`;
-    await speichere();
-  } catch (fehler) {
-    meldung.textContent = "Die Datei konnte nicht gelesen werden. Ist es eine GPX-Datei?";
-    console.error(fehler);
-  }
-});
-
 // ── Statische Karte für Bericht und PDF ──────────────────────────────
 // Setzt helle Kartenkacheln auf ein Canvas und zeichnet Route + Stationen
 // darüber. Ergebnis ist ein JPEG, das im Druck und im PDF gleich aussieht.
@@ -2376,7 +2341,9 @@ function ladeKachel(url) {
 const karteCacheMehr = new Map();
 async function statischeKarte(opt = {}) {
   const st = opt.punkte || stationen();
-  const tracks = opt.punkte ? (opt.linie ? [{ id: "route", punkte: opt.linie, route: true }] : []) : daten.tracks;
+  const tracks = opt.punkte
+    ? (opt.linie ? [{ id: "route", punkte: opt.linie, route: true }] : [])
+    : tageMitEintraegen().map(d => ({ id: d, punkte: tagesLinie(d), route: true })).filter(t => t.punkte);
   const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte)];
   if (!alle.length) return null;
   const B = opt.B || 1400, H = opt.H || 900, RAND = opt.rand || 70;
@@ -2426,23 +2393,37 @@ async function statischeKarte(opt = {}) {
       t.punkte.forEach((q, i) => { const [x, y] = auf(q); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke();
     }
-    if (st.length > 1 && !opt.linie) {
+    // Luftlinie (gestrichelt) nur, wo keine geplante Route vorhanden ist
+    const gestrichelt = opt.punkte
+      ? (opt.linie ? [] : [st])
+      : tageMitEintraegen().filter(d => !tagesLinie(d)).map(d => tagesPunkte(d));
+    for (const seg of gestrichelt) {
+      if (seg.length < 2) continue;
       g.strokeStyle = "#b57d1e"; g.lineWidth = 4; g.setLineDash([12, 12]); g.beginPath();
-      st.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      seg.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke(); g.setLineDash([]);
     }
-    st.forEach((e) => {
+    // Sub-Themen: goldene Nummern
+    st.filter(e => !e.start && !e.ziel).forEach((e) => {
       const [x, y] = auf([e.lat, e.lon]);
       g.beginPath(); g.arc(x, y, 17, 0, Math.PI * 2);
-      g.fillStyle = e.ziel || e.start ? "#e0785a" : "#d4a24e"; g.fill();   // Start/Ziel = Stecknadel-Farbe
+      g.fillStyle = "#d4a24e"; g.fill();
       g.lineWidth = 4; g.strokeStyle = "#ffffff"; g.stroke();
-      g.fillStyle = "#1a1d22"; g.font = "bold 17px -apple-system, Segoe UI, Roboto, sans-serif";
+      g.fillStyle = "#1a1d22";
       g.textAlign = "center"; g.textBaseline = "middle";
-      if (!e.ziel && !e.start) {
-        const t = String(e.nr);
-        g.font = `bold ${t.length > 4 ? 11 : t.length > 3 ? 13 : 15}px -apple-system, Segoe UI, Roboto, sans-serif`;
-        g.fillText(t, x, y + 1);
-      }
+      const t = String(e.nr);
+      g.font = `bold ${t.length > 4 ? 11 : t.length > 3 ? 13 : 15}px -apple-system, Segoe UI, Roboto, sans-serif`;
+      g.fillText(t, x, y + 1);
+    });
+    // 27.10.2026: Start = Stecknadel, Ziel = Zielfahne (darüber gezeichnet)
+    const sz = st.filter(e => e.start || e.ziel);
+    const gr = B >= 1000 ? 1.45 : 1.05;   // auf grossen PDF-Karten etwas grösser
+    sz.filter(e => e.ziel).forEach(e => { const [x, y] = auf([e.lat, e.lon]); zeichneFahne(g, x, y, gr); });
+    sz.filter(e => e.start).forEach(e => {
+      const [x, y] = auf([e.lat, e.lon]);
+      // Liegt hier auch ein Ziel, die Nadel etwas nach links rücken
+      const auchZiel = sz.some(z => z.ziel && km([z.lat, z.lon], [e.lat, e.lon]) < 0.3);
+      zeichneNadel(g, auchZiel ? x - 14 * gr : x, y, gr);
     });
     return c.toDataURL("image/jpeg", 0.86);
   };
@@ -2699,7 +2680,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     }
     doc.setFillColor(...D.papier); doc.rect(0, fotoH, W, H - fotoH, "F");
     doc.setFillColor(...D.goldHell); doc.rect(0, fotoH, W, 2.5, "F");
-    const fakten = [[k.tage, "Tage"], [k.stationen, "Stationen"], [formatZahlCH(k.kmRoute + k.kmTracks), "Kilometer"], [k.fotos, "Fotos"]];
+    const fakten = [[k.tage, "Tage"], [k.stationen, "Stationen"], [formatZahlCH(k.kmRoute), "Kilometer"], [k.fotos, "Fotos"]];
     const spalte = B / fakten.length;
     fakten.forEach(([wert, text], i) => {
       const x = R + i * spalte;
@@ -2725,7 +2706,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, kh);
       y += kh + 4;
       schrift("normal", 7, D.grau);
-      doc.text(pdfText(`Rot: Start und Ziel der Tage · Gold: Sub-Themen (Tag.Nr) · Karte ${KARTEN_QUELLE}`), R, y);
+      doc.text(pdfText(`Stecknadel: Start · Zielfahne: Ziel · Gold: Sub-Themen (Tag.Nr) · Karte ${KARTEN_QUELLE}`), R, y);
       y += 9;
     }
     schrift("bold", 9, D.grau);
