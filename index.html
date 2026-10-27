@@ -933,6 +933,10 @@
           <button type="button" class="btn-abbrechen" id="viaNeu">＋ Zwischenziel / Adresse</button>
           <div id="routenKarte"></div>
           <p class="hinweis" id="routenInfo">Start und Reiseziel mit 📍 oder 🔍 setzen, dann erscheint die Route.</p>
+          <label class="schalter-zeile">
+            <input type="checkbox" id="eLandKarte">
+            <span>Tageskarte als Detailansicht mit Landesübersicht<br><small>Tagesroute gross und maximal skaliert, dazu das ganze Land klein mit markierter Tagesroute (PDF und WhatsApp-Titelkarte)</small></span>
+          </label>
         </div>
       </div>
       <label>Tagebuch
@@ -980,10 +984,6 @@
         <input type="text" id="rSpeicherort" maxlength="120" placeholder="OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch" autocomplete="off">
       </label>
       <p class="hinweis">Der Start bestimmt die Tagnummern (Tag 1, Tag 2 …), die Sub-Themen werden je Tag nummeriert (3.1, 3.2 …).</p>
-      <label class="schalter-zeile">
-        <input type="checkbox" id="rLandKarte">
-        <span>Tageskarte als Detailansicht mit Landesübersicht<br><small>Tagesroute gross und maximal skaliert, dazu das ganze Land klein mit markierter Tagesroute (PDF und WhatsApp-Titelkarte)</small></span>
-      </label>
     </div>
 
     <h2>Bericht</h2>
@@ -1059,7 +1059,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "27.10.2026 · 23:59";
+const APP_VERSION = "28.10.2026 · 00:15";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1363,7 +1363,6 @@ function renderAlles() {
 
   renderTagebuch();
   renderSicherungsInfo();
-  document.getElementById("rLandKarte").checked = !!r.landKarte;
   for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende], ["rSpeicherort", r.speicherort]]) {
     const el = document.getElementById(id);
     if (document.activeElement !== el) el.value = wert || "";
@@ -1520,7 +1519,7 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], landKarte: false, neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
 // Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
@@ -1575,6 +1574,8 @@ function formularLeeren() {
   form.route = null;
   form.routeModus = "auto";
   form.vias = [];
+  form.landKarte = false;
+  feld("eLandKarte").checked = false;
   form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
@@ -1612,6 +1613,8 @@ function bearbeiteEintrag(id) {
     form.route = e.route || null;
     form.routeModus = (e.route && e.route.modus) || "auto";
     form.vias = (e.vias || []).map(v => ({ ...v }));
+    form.landKarte = !!e.landKarte;
+    feld("eLandKarte").checked = form.landKarte;
     form.zLat = Number.isFinite(e.zielLat) ? e.zielLat : null;
     form.zLon = Number.isFinite(e.zielLon) ? e.zielLon : null;
     feld("eZiel").value = e.ziel || "";
@@ -1942,6 +1945,7 @@ async function sucheVia(v, q, treffer) {
     info.textContent = "Suche nicht möglich (offline?).";
   }
 }
+feld("eLandKarte").addEventListener("change", ev => { form.landKarte = ev.target.checked; });
 feld("viaNeu").addEventListener("click", () => {
   form.vias.push({ name: "", lat: null, lon: null });
   renderVias();
@@ -2110,6 +2114,7 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     ziel: thema ? feld("eZiel").value.trim() : "",
     zielLat: thema ? form.zLat : null, zielLon: thema ? form.zLon : null,
     route: thema && form.route ? form.route : null,
+    landKarte: thema ? form.landKarte : false,
     vias: thema ? form.vias.filter(v => Number.isFinite(v.lat)).map(v => ({ name: (v.name || "").trim(), lat: v.lat, lon: v.lon })) : [],
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
@@ -2647,10 +2652,6 @@ document.getElementById("druckBtn").addEventListener("click", async () => {
   window.print();
 });
 
-document.getElementById("rLandKarte").addEventListener("change", ev => {
-  daten.reise.landKarte = ev.target.checked;
-  speichere();
-});
 for (const [id, schluessel] of [["rTitel", "titel"], ["rUntertitel", "untertitel"], ["rStart", "start"], ["rEnde", "ende"], ["rSpeicherort", "speicherort"]]) {
   document.getElementById(id).addEventListener("change", (ev) => {
     daten.reise[schluessel] = ev.target.value.trim();
@@ -2901,7 +2902,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     // Tageskarte über die ganze Breite: Streckenabschnitt des Tages
     const pkt = tagesPunkte(datum, nummern);
     if (pkt.length) {
-      const tk = daten.reise.landKarte
+      const tk = (themaAm(datum) || {}).landKarte
         ? await tagesDetailKarte(datum, 1400, 760, nummern)
         : await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70, linie: tagesLinie(datum) });
       if (tk) {
@@ -3234,7 +3235,7 @@ async function erstelleTitelkarte(datum) {
   const GH = Math.round(W * 0.66);   // Option Detailansicht: Karte über die ganze Breite
   try {
     const punkte = tagesPunkte(datum);
-    if (punkte.length && daten.reise.landKarte) {
+    if (punkte.length && (themaAm(datum) || {}).landKarte) {
       const k = await tagesDetailKarte(datum, W, GH);
       if (k) gross = await bildLaden(k.url);
     } else if (punkte.length) {
