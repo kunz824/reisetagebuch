@@ -498,6 +498,9 @@
     overflow: hidden;
   }
   .leaflet-container { font-family: var(--font); background: #1b1f26; }
+  .schalter-zeile { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text); cursor: pointer; }
+  .schalter-zeile input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
+  .schalter-zeile small { color: var(--text-dim); font-size: 12px; line-height: 1.4; }
   .routen-block { display: flex; flex-direction: column; gap: 8px; }
   .routen-kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
   .routen-modus { display: flex; gap: 4px; }
@@ -977,6 +980,10 @@
         <input type="text" id="rSpeicherort" maxlength="120" placeholder="OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch" autocomplete="off">
       </label>
       <p class="hinweis">Der Start bestimmt die Tagnummern (Tag 1, Tag 2 …), die Sub-Themen werden je Tag nummeriert (3.1, 3.2 …).</p>
+      <label class="schalter-zeile">
+        <input type="checkbox" id="rLandKarte">
+        <span>Tageskarte als Detailansicht mit Landesübersicht<br><small>Tagesroute gross und maximal skaliert, dazu das ganze Land klein mit markierter Tagesroute (PDF und WhatsApp-Titelkarte)</small></span>
+      </label>
     </div>
 
     <h2>Bericht</h2>
@@ -1052,7 +1059,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "27.10.2026 · 23:15";
+const APP_VERSION = "27.10.2026 · 23:59";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1356,6 +1363,7 @@ function renderAlles() {
 
   renderTagebuch();
   renderSicherungsInfo();
+  document.getElementById("rLandKarte").checked = !!r.landKarte;
   for (const [id, wert] of [["rTitel", r.titel], ["rUntertitel", r.untertitel], ["rStart", r.start], ["rEnde", r.ende], ["rSpeicherort", r.speicherort]]) {
     const el = document.getElementById(id);
     if (document.activeElement !== el) el.value = wert || "";
@@ -2344,10 +2352,10 @@ async function statischeKarte(opt = {}) {
   const tracks = opt.punkte
     ? (opt.linie ? [{ id: "route", punkte: opt.linie, route: true }] : [])
     : tageMitEintraegen().map(d => ({ id: d, punkte: tagesLinie(d), route: true })).filter(t => t.punkte);
-  const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte)];
+  const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte), ...(opt.extra || [])];
   if (!alle.length) return null;
   const B = opt.B || 1400, H = opt.H || 900, RAND = opt.rand || 70;
-  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H]);
+  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H, RAND, !!opt.max, opt.extra || 0, opt.rechteck || 0]);
   if (!opt.punkte && karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
   if (opt.punkte && karteCacheMehr.has(schluessel)) return karteCacheMehr.get(schluessel);
 
@@ -2367,7 +2375,16 @@ async function statischeKarte(opt = {}) {
   const p = alle.map(([la, lo]) => px(la, lo, z));
   const mx = (Math.max(...p.map(q => q[0])) + Math.min(...p.map(q => q[0]))) / 2;
   const my = (Math.max(...p.map(q => q[1])) + Math.min(...p.map(q => q[1]))) / 2;
-  const ox = mx - B / 2, oy = my - H / 2;
+  // 27.10.2026: "max" = Ausschnitt stufenlos bis an den Rand vergrössern
+  // (Kachel-Zoom ist ganzzahlig, der Rest wird mit dem Faktor k skaliert).
+  let k = 1;
+  if (opt.max && alle.length > 1) {
+    const bx = Math.max(1, Math.max(...p.map(q => q[0])) - Math.min(...p.map(q => q[0])));
+    const by = Math.max(1, Math.max(...p.map(q => q[1])) - Math.min(...p.map(q => q[1])));
+    k = Math.max(1, Math.min(2, (B - 2 * RAND) / bx, (H - 2 * RAND) / by));
+  }
+  const ox = mx - B / (2 * k), oy = my - H / (2 * k);
+  const auf = ([la, lo]) => { const q = px(la, lo, z); return [(q[0] - ox) * k, (q[1] - oy) * k]; };
 
   const zeichne = async (mitKacheln) => {
     const c = document.createElement("canvas");
@@ -2377,17 +2394,27 @@ async function statischeKarte(opt = {}) {
     g.fillRect(0, 0, B, H);
     if (mitKacheln) {
       const n = 2 ** z, auftraege = [];
-      for (let tx = Math.floor(ox / 256); tx <= Math.floor((ox + B) / 256); tx++) {
-        for (let ty = Math.floor(oy / 256); ty <= Math.floor((oy + H) / 256); ty++) {
+      for (let tx = Math.floor(ox / 256); tx <= Math.floor((ox + B / k) / 256); tx++) {
+        for (let ty = Math.floor(oy / 256); ty <= Math.floor((oy + H / k) / 256); ty++) {
           if (ty < 0 || ty >= n) continue;
           const wx = ((tx % n) + n) % n;
-          auftraege.push(ladeKachel(KACHELN_HELL(z, wx, ty)).then(img => { if (img) g.drawImage(img, tx * 256 - ox, ty * 256 - oy); }));
+          auftraege.push(ladeKachel(KACHELN_HELL(z, wx, ty)).then(img => { if (img) g.drawImage(img, (tx * 256 - ox) * k, (ty * 256 - oy) * k, 256 * k + 0.5, 256 * k + 0.5); }));
         }
       }
       await Promise.all(auftraege);
     }
-    const auf = ([la, lo]) => { const q = px(la, lo, z); return [q[0] - ox, q[1] - oy]; };
     g.lineJoin = "round"; g.lineCap = "round";
+    // Markierung der Tagesroute auf der Landesübersicht
+    if (opt.rechteck) {
+      const [a1, b1] = [auf(opt.rechteck[0]), auf(opt.rechteck[1])];
+      let x = Math.min(a1[0], b1[0]), y = Math.min(a1[1], b1[1]);
+      let w = Math.abs(b1[0] - a1[0]), h = Math.abs(b1[1] - a1[1]);
+      const min = Math.max(14, B * 0.06);
+      if (w < min) { x -= (min - w) / 2; w = min; }
+      if (h < min) { y -= (min - h) / 2; h = min; }
+      g.fillStyle = "rgba(224,96,90,0.22)"; g.fillRect(x, y, w, h);
+      g.lineWidth = Math.max(3, B * 0.012); g.strokeStyle = "#d9483b"; g.strokeRect(x, y, w, h);
+    }
     for (const t of tracks) {
       g.strokeStyle = t.route ? "#b57d1e" : "#2f8aa0"; g.lineWidth = t.route ? 6 : 5; g.beginPath();
       t.punkte.forEach((q, i) => { const [x, y] = auf(q); i ? g.lineTo(x, y) : g.moveTo(x, y); });
@@ -2430,10 +2457,105 @@ async function statischeKarte(opt = {}) {
   let url;
   try { url = await zeichne(true); }
   catch { url = await zeichne(false); }   // Kacheln nicht freigegeben -> ohne Hintergrund
-  const bild = { url, w: B, h: H };
+  const bild = { url, w: B, h: H, auf };
   if (opt.punkte) { karteCacheMehr.set(schluessel, bild); return bild; }
   karteCache = { schluessel, bild };
   return bild;
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// 27.10.2026: Detailansicht des Tages mit Landesübersicht (Option)
+// Land per OpenStreetMap (Nominatim) zum Start des Tages bestimmen; die
+// Umrisse liefern den Ausschnitt. Kleine, weit entfernte Inseln (z.B. die
+// Chatham-Inseln bei Neuseeland) werden weggelassen. Ergebnis wird in den
+// Daten gemerkt (daten.laender, thema.land) und funktioniert dann offline.
+// ═════════════════════════════════════════════════════════════════════
+function landBoxAusGeojson(geo) {
+  const polys = geo && geo.type === "Polygon" ? [geo.coordinates] : geo && geo.type === "MultiPolygon" ? geo.coordinates : [];
+  let boxen = polys.map(poly => {
+    let w = 1e9, e = -1e9, s = 1e9, n = -1e9;
+    for (const [lo, la] of poly[0]) { w = Math.min(w, lo); e = Math.max(e, lo); s = Math.min(s, la); n = Math.max(n, la); }
+    return { w, e, s, n, a: (e - w) * (n - s) };
+  });
+  if (!boxen.length) return null;
+  const gross = Math.max(...boxen.map(b => b.a));
+  boxen = boxen.filter(b => b.a >= gross * 0.03);
+  let w = Math.min(...boxen.map(b => b.w)), e = Math.max(...boxen.map(b => b.e));
+  if (e - w > 180) {   // über die Datumsgrenze: westliche Teile um 360° verschieben
+    boxen = boxen.map(b => (b.e < 0 ? { ...b, w: b.w + 360, e: b.e + 360 } : b));
+    w = Math.min(...boxen.map(b => b.w)); e = Math.max(...boxen.map(b => b.e));
+  }
+  return [[Math.min(...boxen.map(b => b.s)), w], [Math.max(...boxen.map(b => b.n)), e]];
+}
+async function landFuerTag(datum) {
+  const t = themaAm(datum);
+  const p = tagesPunkte(datum)[0];
+  if (!p) return null;
+  daten.laender = daten.laender || {};
+  if (t && t.land && daten.laender[t.land]) return daten.laender[t.land];
+  const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=3&accept-language=de&polygon_geojson=1&polygon_threshold=0.02&lat=${p.lat}&lon=${p.lon}`);
+  if (!a.ok) return null;
+  const j = await a.json();
+  const code = (j.address && j.address.country_code) || "";
+  let box = landBoxAusGeojson(j.geojson);
+  if (!box && j.boundingbox) {
+    const [s, n, w, e] = j.boundingbox.map(Number);
+    if (e - w < 90) box = [[s, w], [n, e]];
+  }
+  if (!code || !box) return null;
+  daten.laender[code] = { name: (j.address && j.address.country) || j.name || code.toUpperCase(), box };
+  if (t) t.land = code;
+  speichere();
+  return daten.laender[code];
+}
+function bildLaden(url) {
+  return new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = url; });
+}
+// Detailkarte (maximal skaliert) + Land klein in der freiesten Ecke
+async function tagesDetailKarte(datum, B, H, nummern) {
+  const pkt = tagesPunkte(datum, nummern);
+  const linie = tagesLinie(datum);
+  if (!pkt.length && !linie) return null;
+  const detail = await statischeKarte({ punkte: pkt, linie, B, H, rand: Math.round(Math.min(B, H) * 0.11), max: true });
+  if (!detail) return null;
+  let land = null;
+  try { land = await landFuerTag(datum); } catch { land = null; }
+  if (!land) return detail;
+  const alle = [...pkt.map(q => [q.lat, q.lon]), ...(linie || [])];
+  const lat = alle.map(q => q[0]), lon = alle.map(q => q[1]);
+  const rechteck = [[Math.min(...lat), Math.min(...lon)], [Math.max(...lat), Math.max(...lon)]];
+  // Seitenverhältnis des Landes (Mercator) für die Übersicht
+  const merc = la => Math.log(Math.tan(Math.PI / 4 + la * Math.PI / 360));
+  const [[s, w], [n, e]] = land.box;
+  const verh = Math.max(0.55, Math.min(1.8, (merc(n) - merc(s)) / ((e - w) * Math.PI / 180)));
+  const iw = Math.round(Math.min(B, H * 1.6) * 0.27), ih = Math.round(iw * verh);
+  const uebersicht = await statischeKarte({ punkte: [], extra: land.box, rechteck, B: iw, H: ih, rand: Math.round(iw * 0.05), max: true });
+  const [bd, bu] = await Promise.all([bildLaden(detail.url), uebersicht ? bildLaden(uebersicht.url) : null]);
+  if (!bd || !bu) return detail;
+  // Ecke mit den wenigsten Routenpunkten wählen
+  const m = Math.round(B * 0.02);
+  const ecken = [[B - iw - m, m], [m, m], [B - iw - m, H - ih - m], [m, H - ih - m]];
+  const punkteXY = alle.map(q => detail.auf(q));
+  const belegt = ([x, y]) => punkteXY.filter(([px2, py2]) => px2 > x - 30 && px2 < x + iw + 30 && py2 > y - 60 && py2 < y + ih + 30).length;
+  const [ex, ey] = ecken.reduce((best, ecke) => (belegt(ecke) < belegt(best) ? ecke : best), ecken[0]);
+  const c = document.createElement("canvas");
+  c.width = B; c.height = H;
+  const g = c.getContext("2d");
+  g.drawImage(bd, 0, 0, B, H);
+  const rahmen = Math.max(3, Math.round(B * 0.004));
+  g.save();
+  g.shadowColor = "rgba(0,0,0,0.35)"; g.shadowBlur = B * 0.012;
+  g.fillStyle = "#ffffff"; g.fillRect(ex - rahmen, ey - rahmen, iw + 2 * rahmen, ih + 2 * rahmen);
+  g.restore();
+  g.drawImage(bu, ex, ey, iw, ih);
+  // Landesname klein
+  const fs = Math.max(11, Math.round(iw * 0.075));
+  g.font = `600 ${fs}px Arial, Helvetica, sans-serif`;
+  const tw = g.measureText(land.name).width;
+  g.fillStyle = "rgba(255,255,255,0.88)"; g.fillRect(ex, ey + ih - fs * 1.6, tw + fs, fs * 1.6);
+  g.fillStyle = "#23262c"; g.textBaseline = "middle";
+  g.fillText(land.name, ex + fs / 2, ey + ih - fs * 0.8);
+  return { url: c.toDataURL("image/jpeg", 0.86), w: B, h: H };
 }
 
 // ── Bericht (Vorschau = Druck) ───────────────────────────────────────
@@ -2525,6 +2647,10 @@ document.getElementById("druckBtn").addEventListener("click", async () => {
   window.print();
 });
 
+document.getElementById("rLandKarte").addEventListener("change", ev => {
+  daten.reise.landKarte = ev.target.checked;
+  speichere();
+});
 for (const [id, schluessel] of [["rTitel", "titel"], ["rUntertitel", "untertitel"], ["rStart", "start"], ["rEnde", "ende"], ["rSpeicherort", "speicherort"]]) {
   document.getElementById(id).addEventListener("change", (ev) => {
     daten.reise[schluessel] = ev.target.value.trim();
@@ -2775,7 +2901,9 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     // Tageskarte über die ganze Breite: Streckenabschnitt des Tages
     const pkt = tagesPunkte(datum, nummern);
     if (pkt.length) {
-      const tk = await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70, linie: tagesLinie(datum) });
+      const tk = daten.reise.landKarte
+        ? await tagesDetailKarte(datum, 1400, 760, nummern)
+        : await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70, linie: tagesLinie(datum) });
       if (tk) {
         const th = B * tk.h / tk.w;
         doc.addImage(tk.url, "JPEG", R, y, B, th);
@@ -3102,14 +3230,18 @@ async function erstelleTitelkarte(datum) {
   const strecke = tagStrecke(datum);
   // 12.10.2026: kleiner Kartenausschnitt mit der Tagesroute oben rechts
   const KW = 380, KH = 285, KX = B - R - KW, KY = R + 14;
-  let karte = null;
+  let karte = null, gross = null;
+  const GH = Math.round(W * 0.66);   // Option Detailansicht: Karte über die ganze Breite
   try {
     const punkte = tagesPunkte(datum);
-    if (punkte.length) {
+    if (punkte.length && daten.reise.landKarte) {
+      const k = await tagesDetailKarte(datum, W, GH);
+      if (k) gross = await bildLaden(k.url);
+    } else if (punkte.length) {
       const k = await statischeKarte({ punkte, B: 480, H: 360, rand: 46, linie: tagesLinie(datum) });
-      if (k) karte = await new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = k.url; });
+      if (k) karte = await bildLaden(k.url);
     }
-  } catch { karte = null; }
+  } catch { karte = null; gross = null; }
   const textB = karte ? W - KW - 32 : W;   // Kopf und Titel laufen links neben der Karte
   const mess = document.createElement("canvas").getContext("2d");
   mess.font = `700 64px ${PK.sans}`;
@@ -3118,6 +3250,7 @@ async function erstelleTitelkarte(datum) {
   const textZ = umbrechen(mess, t && t.text, W);
   let yText = R + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30;
   if (karte) yText = Math.max(yText, KY + KH + 34);
+  if (gross) yText += GH + 34;
   const H = yText + textZ.length * 50 + R;
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
@@ -3152,6 +3285,15 @@ async function erstelleTitelkarte(datum) {
     y += 64;
   }
   y = karte ? Math.max(y + 30, KY + KH + 34) : y + 30;
+  if (gross) {
+    g.save();
+    g.beginPath(); g.roundRect ? g.roundRect(R, y - 6, W, GH, 16) : g.rect(R, y - 6, W, GH); g.clip();
+    g.drawImage(gross, R, y - 6, W, GH);
+    g.restore();
+    g.beginPath(); g.roundRect ? g.roundRect(R, y - 6, W, GH, 16) : g.rect(R, y - 6, W, GH);
+    g.lineWidth = 3; g.strokeStyle = PK.gold; g.stroke();
+    y += GH + 34;
+  }
   g.fillStyle = PK.hell; g.font = `34px ${PK.serif}`;
   textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
   return c;   // ohne Fusszeile (12.10.2026)
