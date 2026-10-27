@@ -394,7 +394,7 @@
   }
   .ort-zeile { display: flex; gap: 6px; }
   .ort-zeile input { flex: 1; }
-  .ort-zeile button {
+  .ort-zeile button, .via-zeile button {
     width: var(--feld-hoehe);
     height: var(--feld-hoehe);
     flex-shrink: 0;
@@ -498,6 +498,38 @@
     overflow: hidden;
   }
   .leaflet-container { font-family: var(--font); background: #1b1f26; }
+  .routen-block { display: flex; flex-direction: column; gap: 8px; }
+  .routen-kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+  .routen-modus { display: flex; gap: 4px; }
+  .routen-modus button {
+    border: 1px solid var(--border); background: var(--bg); color: var(--text-dim);
+    border-radius: 14px; padding: 4px 9px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .routen-modus button.aktiv { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
+  #routenKarte { height: 240px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-panel); }
+  #routenKarte .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(0.92) saturate(0.6); }
+  #viaNeu { width: 100%; }
+  .via-liste { display: flex; flex-direction: column; gap: 8px; }
+  .via-liste:empty { display: none; }
+  .via-zeile { display: flex; gap: 6px; align-items: center; }
+  .via-zeile input { flex: 1; min-width: 0; }
+  .via-zeile button { color: var(--text); font-size: 16px; }
+  .via-nr {
+    flex: none; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .via-zeile.ohne-punkt .via-nr { background: var(--bg-panel-2); color: var(--text-dim); border: 1px dashed var(--accent-soft); }
+  .via-treffer { display: flex; flex-direction: column; gap: 4px; }
+  .via-treffer button {
+    text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); padding: 9px 10px; font: inherit; font-size: 13.5px; cursor: pointer;
+  }
+  .via-treffer button small { display: block; color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+  .via-marker {
+    width: 20px; height: 20px; border-radius: 50%; background: #d4a24e; color: #10141b;
+    border: 2px solid #10141b; font: 700 11px/16px var(--font); text-align: center;
+  }
   /* 11.10.2026: OpenStreetMap-Kacheln (ohne Schlüssel) per Filter dunkel
      einfärben, passend zum App-Design. Marker und Linien bleiben farbig. */
   #karte .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(0.92) saturate(0.6); }
@@ -883,6 +915,22 @@
         </label>
         <div id="zielTreffer"></div>
         <p class="ort-info" id="zielInfo"></p>
+        <!-- 27.10.2026: Routenplanung des Tages -->
+        <div id="routenBlock" class="routen-block">
+          <div class="routen-kopf">
+            <span>Routenplanung</span>
+            <span class="routen-modus" id="routenModus" role="group" aria-label="Verkehrsmittel">
+              <button type="button" data-modus="auto" class="aktiv">🚗 Auto</button>
+              <button type="button" data-modus="velo">🚲 Velo</button>
+              <button type="button" data-modus="fuss">🚶 Zu Fuss</button>
+            </span>
+          </div>
+          <p class="hinweis">Zwischenziele (Adressen) legen den genauen Weg fest. Auf den Karten erscheinen nur Start und Ziel.</p>
+          <div id="viaListe" class="via-liste"></div>
+          <button type="button" class="btn-abbrechen" id="viaNeu">＋ Zwischenziel / Adresse</button>
+          <div id="routenKarte"></div>
+          <p class="hinweis" id="routenInfo">Start und Reiseziel mit 📍 oder 🔍 setzen, dann erscheint die Route.</p>
+        </div>
       </div>
       <label>Tagebuch
         <textarea id="eText" placeholder="Was hast du heute erlebt?"></textarea>
@@ -909,7 +957,7 @@
       <div class="stat"><p class="label">km Tracks</p><p class="zahl" id="rTrackKm">–</p></div>
     </div>
     <div id="karte" style="margin-top:6px"></div>
-    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag, die Nummern sind die Sub-Themen. Gestrichelt: Route des Tages. Blau: aufgezeichnete Tracks.</p>
+    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag, die Nummern sind die Sub-Themen. Gold durchgezogen: geplante Route (Haupteintrag). Gestrichelt: Luftlinie. Blau: aufgezeichnete Tracks.</p>
 
     <h2>Tracks (GPX)</h2>
     <div class="liste" id="trackListe"></div>
@@ -1013,7 +1061,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "22.10.2026 · 21:00";
+const APP_VERSION = "27.10.2026 · 22:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1191,7 +1239,12 @@ function tagesPunkte(datum, nummern = subNummern()) {
   }
   return punkte;
 }
-function tagKm(datum) { return streckeKm(tagesPunkte(datum).map(p => [p.lat, p.lon])); }
+function tagKm(datum) {
+  const rt = gueltigeRoute(themaAm(datum));
+  if (rt) return rt.km;
+  return streckeKm(tagesPunkte(datum).map(p => [p.lat, p.lon]));
+}
+function tagesLinie(datum) { const rt = gueltigeRoute(themaAm(datum)); return rt ? rt.punkte : null; }
 function tagStrecke(datum) {   // "Ersigen → Singapur" (Start bzw. erster Ort → Reiseziel)
   const thema = themaAm(datum);
   const start = (thema && thema.ort) || (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
@@ -1471,7 +1524,7 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
 // Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
@@ -1495,6 +1548,7 @@ function renderRolle() {
     b.disabled = b.dataset.art === "thema" && !!vorhanden;
   });
   feld("zielBlock").hidden = art !== "thema";
+  if (art === "thema") { renderVias(); setTimeout(planeRoute, 0); }
   // Haupteintrag: Ort-Feld = Start des Tages, dazu das Reiseziel
   feld("eOrtLabel").textContent = art === "thema" ? "Start des Tages" : "Ort";
   feld("eOrt").placeholder = art === "thema" ? "z.B. Ersigen" : "z.B. Kyoto";
@@ -1522,6 +1576,9 @@ function formularLeeren() {
   form.id = null;
   form.titel = new Set();
   form.texte = new Map();
+  form.route = null;
+  form.routeModus = "auto";
+  form.vias = [];
   form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
@@ -1556,6 +1613,9 @@ function bearbeiteEintrag(id) {
     form.neu = new Set();
     form.entfernt = new Set();
     form.lat = Number.isFinite(e.lat) ? e.lat : null;
+    form.route = e.route || null;
+    form.routeModus = (e.route && e.route.modus) || "auto";
+    form.vias = (e.vias || []).map(v => ({ ...v }));
     form.zLat = Number.isFinite(e.zielLat) ? e.zielLat : null;
     form.zLon = Number.isFinite(e.zielLon) ? e.zielLon : null;
     feld("eZiel").value = e.ziel || "";
@@ -1663,6 +1723,235 @@ feld("fotoInput").addEventListener("change", async (ev) => {
   meldung.className = "formular-meldung";
 });
 
+// ═════════════════════════════════════════════════════════════════════
+// 27.10.2026: Routenplanung im Haupteintrag
+// Route Start → (Sub-Themen des Tages) → Reiseziel über Strassen/Wege
+// (OpenStreetMap-Routing, ohne Schlüssel). Gespeichert im Haupteintrag als
+// route {modus, km, min, punkte, schluessel}; Karten im PDF, auf der
+// WhatsApp-Titelkarte und im Register Route zeigen dann die echte Strecke,
+// die km des Tages sind Strassen-km. Google Maps übernimmt die Navigation.
+// ═════════════════════════════════════════════════════════════════════
+const ROUTING = {
+  auto: ["https://routing.openstreetmap.de/routed-car/route/v1/driving/", "https://router.project-osrm.org/route/v1/driving/"],
+  velo: ["https://routing.openstreetmap.de/routed-bike/route/v1/driving/"],
+  fuss: ["https://routing.openstreetmap.de/routed-foot/route/v1/driving/"],
+};
+// Wegpunkte der Route: Start, Zwischenziele (Adressen), Reiseziel
+function routenWegpunkte(start, vias, ziel) {
+  const w = [];
+  if (start) w.push(start);
+  for (const v of vias || []) if (Number.isFinite(v.lat) && Number.isFinite(v.lon)) w.push([v.lat, v.lon]);
+  if (ziel) w.push(ziel);
+  // gleiche Punkte direkt hintereinander weglassen
+  return w.filter((p, i) => !i || km(p, w[i - 1]) > 0.05);
+}
+const routenSchluessel = (modus, w) => `${modus}|${w.map(p => p.map(x => x.toFixed(4)).join(",")).join(";")}`;
+// Linie ausdünnen (max. ~400 Punkte), damit die Daten klein bleiben
+function duenneAus(punkte, max = 400) {
+  if (punkte.length <= max) return punkte;
+  const schritt = (punkte.length - 1) / (max - 1);
+  return Array.from({ length: max }, (_, i) => punkte[Math.round(i * schritt)]);
+}
+async function berechneRoute(modus, w) {
+  if (w.length < 2) return null;
+  const koord = w.map(([la, lo]) => `${lo.toFixed(5)},${la.toFixed(5)}`).join(";");
+  let letzterFehler = null;
+  for (const basis of ROUTING[modus] || ROUTING.auto) {
+    try {
+      const a = await fetch(`${basis}${koord}?overview=full&geometries=geojson&steps=false`);
+      if (!a.ok) throw new Error(`Routing ${a.status}`);
+      const j = await a.json();
+      const rt = j.routes && j.routes[0];
+      if (!rt) throw new Error(j.message || "Keine Route gefunden");
+      return {
+        modus,
+        km: Math.round(rt.distance / 100) / 10,
+        min: Math.round(rt.duration / 60),
+        punkte: duenneAus(rt.geometry.coordinates.map(([lo, la]) => [Math.round(la * 1e5) / 1e5, Math.round(lo * 1e5) / 1e5])),
+        schluessel: routenSchluessel(modus, w),
+      };
+    } catch (f) { letzterFehler = f; }
+  }
+  throw letzterFehler || new Error("Keine Route gefunden");
+}
+function dauerText(min) {
+  if (!Number.isFinite(min)) return "";
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h} h${m ? ` ${String(m).padStart(2, "0")} min` : ""}` : `${m} min`;
+}
+// Gilt die gespeicherte Route noch zu den aktuellen Punkten des Tages?
+function gueltigeRoute(thema) {
+  if (!thema || !thema.route || !thema.route.punkte) return null;
+  const start = Number.isFinite(thema.lat) ? [thema.lat, thema.lon] : null;
+  const ziel = Number.isFinite(thema.zielLat) ? [thema.zielLat, thema.zielLon] : null;
+  const w = routenWegpunkte(start, thema.vias, ziel);
+  return routenSchluessel(thema.route.modus, w) === thema.route.schluessel ? thema.route : null;
+}
+
+// Kleine Karte im Formular
+let routenKarte = null, routenEbene = null, routenTimer = null, routenLauf = 0;
+function formWegpunkte() {
+  const start = Number.isFinite(form.lat) ? [form.lat, form.lon] : null;
+  const ziel = Number.isFinite(form.zLat) ? [form.zLat, form.zLon] : null;
+  return { start, ziel, w: routenWegpunkte(start, form.vias, ziel) };
+}
+function zeichneRoutenKarte() {
+  if (feld("routenBlock").closest("[hidden]")) return;
+  if (!window.L) { feld("routenKarte").innerHTML = '<p class="leer">Die Karte braucht eine Internetverbindung.</p>'; return; }
+  if (!routenKarte) {
+    routenKarte = L.map("routenKarte", { zoomControl: false, attributionControl: true });
+    L.tileLayer(KACHELN, { maxZoom: 19, crossOrigin: true, attribution: "© OpenStreetMap" }).addTo(routenKarte);
+    routenEbene = L.layerGroup().addTo(routenKarte);
+  }
+  routenKarte.invalidateSize();
+  routenEbene.clearLayers();
+  const { start, ziel, w } = formWegpunkte();
+  const grenzen = [...w];
+  if (form.route && form.route.punkte) {
+    L.polyline(form.route.punkte, { color: "#d4a24e", weight: 4, opacity: 0.95 }).addTo(routenEbene);
+    grenzen.push(...form.route.punkte);
+  } else if (w.length > 1) {
+    L.polyline(w, { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.8 }).addTo(routenEbene);
+  }
+  const punkt = (p, farbe, r) => L.circleMarker(p, { radius: r, color: "#10141b", weight: 2, fillColor: farbe, fillOpacity: 1 }).addTo(routenEbene);
+  form.vias.filter(v => Number.isFinite(v.lat)).forEach((v, i) => {
+    L.marker([v.lat, v.lon], { icon: L.divIcon({ className: "", html: `<div class="via-marker">${i + 1}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) })
+      .bindTooltip(v.name || `Zwischenziel ${i + 1}`).addTo(routenEbene);
+  });
+  if (start) punkt(start, "#e0785a", 7).bindTooltip("Start");
+  if (ziel) punkt(ziel, "#e0785a", 7).bindTooltip("Ziel");
+  if (grenzen.length > 1) routenKarte.fitBounds(grenzen, { padding: [24, 24], maxZoom: 13 });
+  else if (grenzen.length === 1) routenKarte.setView(grenzen[0], 11);
+  else routenKarte.setView([46.8, 8.2], 6);
+}
+function renderRoutenInfo() {
+  const { start, ziel, w } = formWegpunkte();
+  const info = feld("routenInfo");
+  document.querySelectorAll("#routenModus button").forEach(b => b.classList.toggle("aktiv", b.dataset.modus === form.routeModus));
+  if (!start || !ziel) { info.textContent = "Start und Reiseziel mit 📍 oder 🔍 setzen, dann erscheint die Route."; return; }
+  if (form.route) {
+    const ueber = w.length > 2 ? ` · über ${w.length - 2} Zwischenziel${w.length === 3 ? "" : "e"}` : "";
+    info.textContent = `${{ auto: "🚗", velo: "🚲", fuss: "🚶" }[form.route.modus] || ""} ${formatZahlCH(form.route.km, form.route.km < 10 ? 1 : 0)} km · ca. ${dauerText(form.route.min)}${ueber}`;
+  }
+}
+// Route neu berechnen, sobald sich Start, Ziel oder Verkehrsmittel ändern
+function planeRouteBald() {
+  clearTimeout(routenTimer);
+  routenTimer = setTimeout(planeRoute, 250);
+}
+async function planeRoute() {
+  if (aufgeloesteArt() !== "thema") return;
+  const { start, ziel, w } = formWegpunkte();
+  const lauf = ++routenLauf;
+  if (form.route && form.route.schluessel !== routenSchluessel(form.routeModus, w)) form.route = null;
+  if (start && ziel && !form.route) {
+    feld("routenInfo").textContent = "Route wird berechnet …";
+    try {
+      const rt = await berechneRoute(form.routeModus, w);
+      if (lauf !== routenLauf) return;
+      form.route = rt;
+    } catch (f) {
+      if (lauf !== routenLauf) return;
+      form.route = null;
+      feld("routenInfo").textContent = navigator.onLine === false
+        ? "Offline: Route wird berechnet, sobald wieder Internet da ist (Eintrag nochmals öffnen)."
+        : `Keine Route gefunden (${f.message}). Luftlinie wird verwendet.`;
+      zeichneRoutenKarte();
+      return;
+    }
+  }
+  renderRoutenInfo();
+  zeichneRoutenKarte();
+}
+document.querySelectorAll("#routenModus button").forEach(b => b.addEventListener("click", () => {
+  form.routeModus = b.dataset.modus;
+  form.route = null;
+  renderRoutenInfo();
+  planeRoute();
+}));
+
+// Zwischenziele: Adresse eingeben, 🔍 sucht, Treffer antippen setzt den Punkt
+function renderVias() {
+  const liste = feld("viaListe");
+  liste.innerHTML = "";
+  form.vias.forEach((v, i) => {
+    const block = document.createElement("div");
+    const zeile = document.createElement("div");
+    zeile.className = "via-zeile" + (Number.isFinite(v.lat) ? "" : " ohne-punkt");
+    const nr = document.createElement("span");
+    nr.className = "via-nr";
+    nr.textContent = i + 1;
+    const ein = document.createElement("input");
+    ein.type = "search";
+    ein.maxLength = 120;
+    ein.placeholder = "Adresse oder Ort";
+    ein.value = v.name || "";
+    ein.autocomplete = "off";
+    ein.enterKeyHint = "search";
+    ein.addEventListener("input", () => {
+      v.name = ein.value;
+      if (Number.isFinite(v.lat)) { v.lat = null; v.lon = null; zeile.classList.add("ohne-punkt"); planeRouteBald(); }
+    });
+    const treffer = document.createElement("div");
+    treffer.className = "via-treffer";
+    const suchen = document.createElement("button");
+    suchen.type = "button";
+    suchen.textContent = "🔍";
+    suchen.setAttribute("aria-label", "Adresse suchen");
+    const suche = () => sucheVia(v, ein.value.trim(), treffer);
+    suchen.addEventListener("click", suche);
+    ein.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); suche(); } });
+    const weg = document.createElement("button");
+    weg.type = "button";
+    weg.textContent = "✕";
+    weg.setAttribute("aria-label", "Zwischenziel entfernen");
+    weg.addEventListener("click", () => { form.vias.splice(i, 1); renderVias(); planeRouteBald(); });
+    zeile.append(nr, ein, suchen, weg);
+    block.append(zeile, treffer);
+    liste.appendChild(block);
+  });
+}
+async function sucheVia(v, q, treffer) {
+  treffer.innerHTML = "";
+  if (!q) return;
+  const info = document.createElement("p");
+  info.className = "hinweis";
+  info.textContent = "Suche …";
+  treffer.appendChild(info);
+  try {
+    const a = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=de&q=${encodeURIComponent(q)}`);
+    if (!a.ok) throw new Error();
+    const liste = await a.json();
+    treffer.innerHTML = "";
+    if (!liste.length) { info.textContent = `„${q}“ nicht gefunden.`; treffer.appendChild(info); return; }
+    for (const t of liste) {
+      const teile = t.display_name.split(",").map(x => x.trim());
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = teile.slice(0, 2).join(", ");
+      const klein = document.createElement("small");
+      klein.textContent = teile.slice(2).join(", ");
+      b.appendChild(klein);
+      b.addEventListener("click", () => {
+        v.lat = Number(Number(t.lat).toFixed(5));
+        v.lon = Number(Number(t.lon).toFixed(5));
+        v.name = q;
+        renderVias();
+        planeRouteBald();
+      });
+      treffer.appendChild(b);
+    }
+  } catch {
+    info.textContent = "Suche nicht möglich (offline?).";
+  }
+}
+feld("viaNeu").addEventListener("click", () => {
+  form.vias.push({ name: "", lat: null, lon: null });
+  renderVias();
+  const felder = feld("viaListe").querySelectorAll("input");
+  felder[felder.length - 1].focus();
+});
+
 // Zwei Ortsfelder mit gleicher Logik: Ort des Eintrags und Reiseziel des Tages
 const ORTSFELDER = {
   ort: { eingabe: "eOrt", gps: "ortGps", suchen: "ortSuchen", treffer: "ortTreffer", info: "ortInfo", lat: "lat", lon: "lon", beispiel: "Kyoto" },
@@ -1670,6 +1959,7 @@ const ORTSFELDER = {
 };
 function renderOrtInfo() { Object.keys(ORTSFELDER).forEach(renderPunktInfo); }
 function renderPunktInfo(k) {
+  planeRouteBald();
   const f = ORTSFELDER[k];
   const info = feld(f.info);
   info.innerHTML = "";
@@ -1769,6 +2059,15 @@ async function ersterTreffer(q) {
   } catch { return null; }
 }
 async function fehlendeKartenpunkte() {
+  if (aufgeloesteArt() === "thema") {
+    let neu = false;
+    for (const v of form.vias) {
+      if (Number.isFinite(v.lat) || !(v.name || "").trim()) continue;
+      const pt = await ersterTreffer(v.name.trim());
+      if (pt) { v.lat = pt[0]; v.lon = pt[1]; neu = true; }
+    }
+    if (neu) form.route = null;
+  }
   for (const k of Object.keys(ORTSFELDER)) {
     const f = ORTSFELDER[k];
     const q = feld(f.eingabe).value.trim();
@@ -1776,6 +2075,7 @@ async function fehlendeKartenpunkte() {
     const pt = await ersterTreffer(q);
     if (pt) { form[f.lat] = pt[0]; form[f.lon] = pt[1]; }
   }
+  if (aufgeloesteArt() === "thema") await planeRoute();   // Route zu den aktuellen Punkten
 }
 
 feld("eintragFormular").addEventListener("submit", async (ev) => {
@@ -1812,6 +2112,8 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     fotos: thema ? [] : [...form.fotos],
     ziel: thema ? feld("eZiel").value.trim() : "",
     zielLat: thema ? form.zLat : null, zielLon: thema ? form.zLon : null,
+    route: thema && form.route ? form.route : null,
+    vias: thema ? form.vias.filter(v => Number.isFinite(v.lat)).map(v => ({ name: (v.name || "").trim(), lat: v.lat, lon: v.lon })) : [],
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
   if (bisher) Object.assign(bisher, eintrag); else daten.eintraege.push(eintrag);
@@ -1900,7 +2202,16 @@ function zeichneKarte() {
   }
   const st = stationen();
   if (st.length > 1) {
-    L.polyline(st.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.9 }).addTo(karteEbene);
+    L.polyline(st.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.55 }).addTo(karteEbene);
+  }
+  // 27.10.2026: geplante Strecken der Tage (Strasse/Weg) durchgezogen
+  for (const datum of tageMitEintraegen()) {
+    const linie = tagesLinie(datum);
+    if (linie) {
+      L.polyline(linie, { color: "#d4a24e", weight: 4, opacity: 0.95 })
+        .bindPopup(`${tagLabel(datum)}: ${tagStrecke(datum)} · ${formatZahlCH(tagKm(datum))} km`).addTo(karteEbene);
+      grenzen.push(...linie);
+    }
   }
   // 11.10.2026: Haupteintrag (Start/Ziel) = eine Stecknadel, Sub-Themen = Nummer.
   // Fallen Start und Ziel auf denselben Ort (z.B. Ziel von Tag 2 = Start von
@@ -2065,11 +2376,11 @@ function ladeKachel(url) {
 const karteCacheMehr = new Map();
 async function statischeKarte(opt = {}) {
   const st = opt.punkte || stationen();
-  const tracks = opt.punkte ? [] : daten.tracks;
+  const tracks = opt.punkte ? (opt.linie ? [{ id: "route", punkte: opt.linie, route: true }] : []) : daten.tracks;
   const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte)];
   if (!alle.length) return null;
   const B = opt.B || 1400, H = opt.H || 900, RAND = opt.rand || 70;
-  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id), B, H]);
+  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H]);
   if (!opt.punkte && karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
   if (opt.punkte && karteCacheMehr.has(schluessel)) return karteCacheMehr.get(schluessel);
 
@@ -2111,11 +2422,11 @@ async function statischeKarte(opt = {}) {
     const auf = ([la, lo]) => { const q = px(la, lo, z); return [q[0] - ox, q[1] - oy]; };
     g.lineJoin = "round"; g.lineCap = "round";
     for (const t of tracks) {
-      g.strokeStyle = "#2f8aa0"; g.lineWidth = 5; g.beginPath();
+      g.strokeStyle = t.route ? "#b57d1e" : "#2f8aa0"; g.lineWidth = t.route ? 6 : 5; g.beginPath();
       t.punkte.forEach((q, i) => { const [x, y] = auf(q); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke();
     }
-    if (st.length > 1) {
+    if (st.length > 1 && !opt.linie) {
       g.strokeStyle = "#b57d1e"; g.lineWidth = 4; g.setLineDash([12, 12]); g.beginPath();
       st.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke(); g.setLineDash([]);
@@ -2483,7 +2794,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     // Tageskarte über die ganze Breite: Streckenabschnitt des Tages
     const pkt = tagesPunkte(datum, nummern);
     if (pkt.length) {
-      const tk = await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70 });
+      const tk = await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70, linie: tagesLinie(datum) });
       if (tk) {
         const th = B * tk.h / tk.w;
         doc.addImage(tk.url, "JPEG", R, y, B, th);
@@ -2814,7 +3125,7 @@ async function erstelleTitelkarte(datum) {
   try {
     const punkte = tagesPunkte(datum);
     if (punkte.length) {
-      const k = await statischeKarte({ punkte, B: 480, H: 360, rand: 46 });
+      const k = await statischeKarte({ punkte, B: 480, H: 360, rand: 46, linie: tagesLinie(datum) });
       if (k) karte = await new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = k.url; });
     }
   } catch { karte = null; }
