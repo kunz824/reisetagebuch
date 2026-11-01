@@ -1064,7 +1064,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "02.11.2026 · 08:00";
+const APP_VERSION = "02.11.2026 · 08:30";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2046,7 +2046,7 @@ async function sucheVia(v, q, treffer) {
 }
 // Kartenansicht des Tages: Standard / Anreise (Weltkarte, Flugstrecke) / Detail (Land)
 const KARTEN_ART_INFO = {
-  anreise: "Anreise: Start, Zwischenstopps und Ziel auf einer Weltkarte, skaliert auf die Reisestrecke. Strecke als Flug (Luftlinie über die Erdkugel), dazu die Welt klein.",
+  anreise: "Anreise: Start, Zwischenstopps und Ziel auf der Weltkarte, noch ohne bestimmtes Land.",
   detail: "Detail: Tagesroute gross und maximal skaliert, dazu das ganze Land klein mit markierter Tagesroute.",
 };
 function renderKartenArt() {
@@ -2504,7 +2504,7 @@ async function statischeKarte(opt = {}) {
   const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte), ...(opt.extra || [])];
   if (!alle.length) return null;
   const B = opt.B || 1400, H = opt.H || 900, RAND = opt.rand || 70;
-  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H, RAND, !!opt.max, opt.extra || 0, opt.rechteck || 0]);
+  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H, RAND, !!opt.max, opt.extra || 0, opt.rechteck || 0, (opt.rahmen || []).map(x => [x.label, x.box])]);
   if (!opt.punkte && karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
   if (opt.punkte && karteCacheMehr.has(schluessel)) return karteCacheMehr.get(schluessel);
 
@@ -2553,7 +2553,17 @@ async function statischeKarte(opt = {}) {
       await Promise.all(auftraege);
     }
     g.lineJoin = "round"; g.lineCap = "round";
-    // Markierung der Tagesroute auf der Landesübersicht
+    // 02.11.2026: Rahmen je Tag mit Tagesnummer in der Mitte (Länderübersicht)
+    for (const rb of opt.rahmen || []) {
+      const [a1, b1] = [auf(rb.box[0]), auf(rb.box[1])];
+      const pad = Math.max(10, B * 0.012);
+      let x = Math.min(a1[0], b1[0]) - pad, y = Math.min(a1[1], b1[1]) - pad;
+      let w = Math.abs(b1[0] - a1[0]) + 2 * pad, h = Math.abs(b1[1] - a1[1]) + 2 * pad;
+      g.fillStyle = "rgba(212,162,78,0.10)"; g.fillRect(x, y, w, h);
+      g.lineWidth = Math.max(2.5, B * 0.0028); g.strokeStyle = "#b57d1e"; g.setLineDash([]);
+      g.strokeRect(x, y, w, h);
+      rb.mitte = [x + w / 2, y + h / 2];
+    }
     if (opt.rechteck) {
       const [a1, b1] = [auf(opt.rechteck[0]), auf(opt.rechteck[1])];
       let x = Math.min(a1[0], b1[0]), y = Math.min(a1[1], b1[1]);
@@ -2579,6 +2589,18 @@ async function statischeKarte(opt = {}) {
       g.strokeStyle = "#b57d1e"; g.lineWidth = 4; g.setLineDash([12, 12]); g.beginPath();
       seg.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke(); g.setLineDash([]);
+    }
+    for (const rb of opt.rahmen || []) {
+      if (!rb.mitte) continue;
+      const fs = Math.round(Math.max(16, B * 0.022));
+      g.font = `700 ${fs}px Arial, Helvetica, sans-serif`;
+      const tw = g.measureText(rb.label).width + fs * 1.1, th = fs * 1.6;
+      const [mx2, my2] = rb.mitte;
+      g.fillStyle = "#ffffff"; g.strokeStyle = "#b57d1e"; g.lineWidth = 2.5;
+      g.beginPath(); g.roundRect ? g.roundRect(mx2 - tw / 2, my2 - th / 2, tw, th, th / 2) : g.rect(mx2 - tw / 2, my2 - th / 2, tw, th);
+      g.fill(); g.stroke();
+      g.fillStyle = "#23262c"; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(rb.label, mx2, my2 + 1);
     }
     // Sub-Themen: goldene Nummern
     st.filter(e => !e.start && !e.ziel).forEach((e) => {
@@ -2673,11 +2695,14 @@ async function tagesDetailKarte(datum, B, H, nummern, art = kartenArtAm(datum)) 
   const pkt = tagesPunkte(datum, nummern);
   const linien = tagesLinien(datum);
   if (!pkt.length && !linien.length) return null;
+  // 02.11.2026: Anreise = ganze Weltkarte (noch kein bestimmtes Land)
+  if (art === "anreise") {
+    return statischeKarte({ punkte: pkt, linien, extra: WELT.box, B, H, rand: Math.round(Math.min(B, H) * 0.04), max: true });
+  }
   const detail = await statischeKarte({ punkte: pkt, linien, B, H, rand: Math.round(Math.min(B, H) * 0.11), max: true });
   if (!detail) return null;
   let land = null;
-  if (art === "anreise") land = WELT;
-  else { try { land = await landFuerTag(datum); } catch { land = null; } }
+  try { land = await landFuerTag(datum); } catch { land = null; }
   if (!land) return detail;
   const alle = [...pkt.map(q => [q.lat, q.lon]), ...linien.flatMap(l => l.punkte)];
   const lat = alle.map(q => q[0]), lon = alle.map(q => q[1]);
@@ -3010,12 +3035,19 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     if (laender.size) {
       let erstes = true;
       for (const { land, tage: lt } of laender.values()) {
-        const punkte = lt.flatMap(d => tagesPunkte(d, nummern));
         const linien = lt.flatMap(d => tagesLinien(d));
+        // Übersicht: je Tag Route + Rahmen mit "Tag N" in der Mitte, ohne Einzelpunkte
+        const rahmen = lt.map(d => {
+          const ps = [...tagesPunkte(d, nummern).map(q => [q.lat, q.lon]), ...tagesLinien(d).flatMap(l => l.punkte)];
+          if (!ps.length) return null;
+          const la = ps.map(q => q[0]), lo = ps.map(q => q[1]);
+          return { label: tagNummer(d) ? `Tag ${tagNummer(d)}` : tagLabel(d), box: [[Math.min(...la), Math.min(...lo)], [Math.max(...la), Math.max(...lo)]] };
+        }).filter(Boolean);
+        const punkte = [];
         const merc = la => Math.log(Math.tan(Math.PI / 4 + la * Math.PI / 360));
         const [[s0, w0], [n0, e0]] = land.box;
         const verh = Math.max(0.5, Math.min(1.6, (merc(n0) - merc(s0)) / ((e0 - w0) * Math.PI / 180)));
-        const lk = await statischeKarte({ punkte, linien, extra: land.box, B: 1400, H: Math.round(1400 * verh), rand: 40, max: true, ohneLuftlinie: true });
+        const lk = await statischeKarte({ punkte, linien, rahmen, extra: [...land.box, ...rahmen.flatMap(x => x.box)], B: 1400, H: Math.round(1400 * verh), rand: 40, max: true, ohneLuftlinie: true });
         const kmL = lt.reduce((sum, d) => sum + tagKm(d), 0);
         const nr = lt.map(tagNummer).filter(Boolean);
         // Hohe Länder (z.B. Neuseeland, Chile) schmaler darstellen, max. 150 mm hoch
@@ -3062,14 +3094,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         doc.text(doc.splitTextToSize(pdfText(zeile), B - 20)[0], R + 18, y);
         y += 4.6;
       }
-      for (const e of subs) {
-        platz(5);
-        const pw = pille(nummern.get(e.id), R + 18, y, false);
-        schrift("normal", 9, D.tinte);
-        doc.text(doc.splitTextToSize(pdfText(`${e.titel || e.ort || "Sub-Thema"}${istSubRoute(e) ? `  (${subRouteText(e)})` : e.ort && e.titel ? `  (${e.ort})` : ""}`), B - 24 - pw)[0], R + 20 + pw, y);
-        y += 4.8;
-      }
-      y += 4;
+      y += 4;   // 02.11.2026: ohne Auflistung der Sub-Einträge
     }
   }
 
