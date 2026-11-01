@@ -921,6 +921,15 @@
         <!-- 27.10.2026: Routenplanung des Tages -->
         <div id="routenBlock" class="routen-block">
           <div class="routen-kopf">
+            <span>Kartenansicht</span>
+            <span class="routen-modus" id="kartenArtWahl" role="group" aria-label="Kartenansicht">
+              <button type="button" data-art="normal" class="aktiv">Standard</button>
+              <button type="button" data-art="anreise">✈️ Anreise</button>
+              <button type="button" data-art="detail">🔍 Detail</button>
+            </span>
+          </div>
+          <p class="hinweis" id="kartenArtInfo"></p>
+          <div class="routen-kopf">
             <span>Routenplanung</span>
             <span class="routen-modus" id="routenModus" role="group" aria-label="Verkehrsmittel">
               <button type="button" data-modus="auto" class="aktiv">🚗 Auto</button>
@@ -933,10 +942,6 @@
           <button type="button" class="btn-abbrechen" id="viaNeu">＋ Zwischenziel / Adresse</button>
           <div id="routenKarte"></div>
           <p class="hinweis" id="routenInfo">Start und Reiseziel mit 📍 oder 🔍 setzen, dann erscheint die Route.</p>
-          <label class="schalter-zeile">
-            <input type="checkbox" id="eLandKarte">
-            <span>Tageskarte als Detailansicht mit Landesübersicht<br><small>Tagesroute gross und maximal skaliert, dazu das ganze Land klein mit markierter Tagesroute (PDF und WhatsApp-Titelkarte)</small></span>
-          </label>
         </div>
       </div>
       <label>Tagebuch
@@ -1059,7 +1064,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "28.10.2026 · 00:15";
+const APP_VERSION = "01.11.2026 · 18:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1519,7 +1524,7 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], landKarte: false, neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], kartenArt: "normal", neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
 // Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
@@ -1543,7 +1548,7 @@ function renderRolle() {
     b.disabled = b.dataset.art === "thema" && !!vorhanden;
   });
   feld("zielBlock").hidden = art !== "thema";
-  if (art === "thema") { renderVias(); setTimeout(planeRoute, 0); }
+  if (art === "thema") { renderVias(); renderKartenArt(); setTimeout(planeRoute, 0); }
   // Haupteintrag: Ort-Feld = Start des Tages, dazu das Reiseziel
   feld("eOrtLabel").textContent = art === "thema" ? "Start des Tages" : "Ort";
   feld("eOrt").placeholder = art === "thema" ? "z.B. Ersigen" : "z.B. Kyoto";
@@ -1574,8 +1579,7 @@ function formularLeeren() {
   form.route = null;
   form.routeModus = "auto";
   form.vias = [];
-  form.landKarte = false;
-  feld("eLandKarte").checked = false;
+  form.kartenArt = "normal";
   form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
@@ -1613,8 +1617,7 @@ function bearbeiteEintrag(id) {
     form.route = e.route || null;
     form.routeModus = (e.route && e.route.modus) || "auto";
     form.vias = (e.vias || []).map(v => ({ ...v }));
-    form.landKarte = !!e.landKarte;
-    feld("eLandKarte").checked = form.landKarte;
+    form.kartenArt = kartenArtVon(e);
     form.zLat = Number.isFinite(e.zielLat) ? e.zielLat : null;
     form.zLon = Number.isFinite(e.zielLon) ? e.zielLon : null;
     feld("eZiel").value = e.ziel || "";
@@ -1751,8 +1754,33 @@ function duenneAus(punkte, max = 400) {
   const schritt = (punkte.length - 1) / (max - 1);
   return Array.from({ length: max }, (_, i) => punkte[Math.round(i * schritt)]);
 }
+// Grosskreis (kürzester Weg über die Erdkugel), Längengrade fortlaufend
+function grosskreis(w, n = 64) {
+  const r = Math.PI / 180, out = [];
+  for (let i = 1; i < w.length; i++) {
+    const [la1, lo1] = [w[i - 1][0] * r, w[i - 1][1] * r], [la2, lo2] = [w[i][0] * r, w[i][1] * r];
+    const d = 2 * Math.asin(Math.sqrt(Math.sin((la2 - la1) / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin((lo2 - lo1) / 2) ** 2));
+    for (let j = i === 1 ? 0 : 1; j <= n; j++) {
+      const f = j / n;
+      if (d < 1e-9) { out.push([w[i][0], w[i][1]]); continue; }
+      const A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+      const x = A * Math.cos(la1) * Math.cos(lo1) + B * Math.cos(la2) * Math.cos(lo2);
+      const y = A * Math.cos(la1) * Math.sin(lo1) + B * Math.cos(la2) * Math.sin(lo2);
+      const z = A * Math.sin(la1) + B * Math.sin(la2);
+      out.push([Math.atan2(z, Math.hypot(x, y)) / r, Math.atan2(y, x) / r]);
+    }
+  }
+  for (let i = 1; i < out.length; i++) {   // über die Datumsgrenze ohne Sprung
+    while (out[i][1] - out[i - 1][1] > 180) out[i][1] -= 360;
+    while (out[i][1] - out[i - 1][1] < -180) out[i][1] += 360;
+  }
+  return out.map(([la, lo]) => [Math.round(la * 1e4) / 1e4, Math.round(lo * 1e4) / 1e4]);
+}
 async function berechneRoute(modus, w) {
   if (w.length < 2) return null;
+  if (modus === "flug") {
+    return { modus, km: Math.round(streckeKm(w)), min: null, punkte: grosskreis(w), schluessel: routenSchluessel(modus, w) };
+  }
   const koord = w.map(([la, lo]) => `${lo.toFixed(5)},${la.toFixed(5)}`).join(";");
   let letzterFehler = null;
   for (const basis of ROUTING[modus] || ROUTING.auto) {
@@ -1778,6 +1806,9 @@ function dauerText(min) {
   const h = Math.floor(min / 60), m = min % 60;
   return h ? `${h} h${m ? ` ${String(m).padStart(2, "0")} min` : ""}` : `${m} min`;
 }
+// Kartenansicht eines Haupteintrags (alte Option "landKarte" = Detail)
+function kartenArtVon(t) { return (t && (t.kartenArt || (t.landKarte ? "detail" : ""))) || "normal"; }
+function kartenArtAm(datum) { return kartenArtVon(themaAm(datum)); }
 // Gilt die gespeicherte Route noch zu den aktuellen Punkten des Tages?
 function gueltigeRoute(thema) {
   if (!thema || !thema.route || !thema.route.punkte) return null;
@@ -1820,6 +1851,7 @@ function zeichneRoutenKarte() {
   const gleich = start && ziel && km(start, ziel) < 0.3;
   if (start) L.marker(start, { icon: startZielIcon(true, gleich), zIndexOffset: 200 }).bindTooltip("Start").addTo(routenEbene);
   if (ziel && !gleich) L.marker(ziel, { icon: startZielIcon(false, true), zIndexOffset: 200 }).bindTooltip("Ziel").addTo(routenEbene);
+  routenKarte.setMinZoom(1);
   if (grenzen.length > 1) routenKarte.fitBounds(grenzen, { padding: [24, 24], maxZoom: 13 });
   else if (grenzen.length === 1) routenKarte.setView(grenzen[0], 11);
   else routenKarte.setView([46.8, 8.2], 6);
@@ -1830,8 +1862,10 @@ function renderRoutenInfo() {
   document.querySelectorAll("#routenModus button").forEach(b => b.classList.toggle("aktiv", b.dataset.modus === form.routeModus));
   if (!start || !ziel) { info.textContent = "Start und Reiseziel mit 📍 oder 🔍 setzen, dann erscheint die Route."; return; }
   if (form.route) {
-    const ueber = w.length > 2 ? ` · über ${w.length - 2} Zwischenziel${w.length === 3 ? "" : "e"}` : "";
-    info.textContent = `${{ auto: "🚗", velo: "🚲", fuss: "🚶" }[form.route.modus] || ""} ${formatZahlCH(form.route.km, form.route.km < 10 ? 1 : 0)} km · ca. ${dauerText(form.route.min)}${ueber}`;
+    const ueber = w.length > 2 ? ` · über ${w.length - 2} Zwischen${form.route.modus === "flug" ? "stopp" : "ziel"}${w.length === 3 ? "" : "e"}` : "";
+    info.textContent = form.route.modus === "flug"
+      ? `✈️ ${formatZahlCH(form.route.km, 0)} km Flugstrecke (Luftlinie)${ueber}`
+      : `${{ auto: "🚗", velo: "🚲", fuss: "🚶" }[form.route.modus] || ""} ${formatZahlCH(form.route.km, form.route.km < 10 ? 1 : 0)} km · ca. ${dauerText(form.route.min)}${ueber}`;
   }
 }
 // Route neu berechnen, sobald sich Start, Ziel oder Verkehrsmittel ändern
@@ -1843,11 +1877,12 @@ async function planeRoute() {
   if (aufgeloesteArt() !== "thema") return;
   const { start, ziel, w } = formWegpunkte();
   const lauf = ++routenLauf;
-  if (form.route && form.route.schluessel !== routenSchluessel(form.routeModus, w)) form.route = null;
+  const modus = form.kartenArt === "anreise" ? "flug" : form.routeModus;
+  if (form.route && form.route.schluessel !== routenSchluessel(modus, w)) form.route = null;
   if (start && ziel && !form.route) {
     feld("routenInfo").textContent = "Route wird berechnet …";
     try {
-      const rt = await berechneRoute(form.routeModus, w);
+      const rt = await berechneRoute(modus, w);
       if (lauf !== routenLauf) return;
       form.route = rt;
     } catch (f) {
@@ -1945,7 +1980,23 @@ async function sucheVia(v, q, treffer) {
     info.textContent = "Suche nicht möglich (offline?).";
   }
 }
-feld("eLandKarte").addEventListener("change", ev => { form.landKarte = ev.target.checked; });
+// Kartenansicht des Tages: Standard / Anreise (Weltkarte, Flugstrecke) / Detail (Land)
+const KARTEN_ART_INFO = {
+  normal: "Normale Tageskarte.",
+  anreise: "Anreise: Start, Zwischenstopps und Ziel auf einer Weltkarte, skaliert auf die Reisestrecke. Strecke als Flug (Luftlinie über die Erdkugel), dazu die Welt klein.",
+  detail: "Detail: Tagesroute gross und maximal skaliert, dazu das ganze Land klein mit markierter Tagesroute.",
+};
+function renderKartenArt() {
+  document.querySelectorAll("#kartenArtWahl button").forEach(b => b.classList.toggle("aktiv", b.dataset.art === form.kartenArt));
+  feld("kartenArtInfo").textContent = KARTEN_ART_INFO[form.kartenArt] || "";
+  feld("routenModus").hidden = form.kartenArt === "anreise";   // Anreise = Flug
+}
+document.querySelectorAll("#kartenArtWahl button").forEach(b => b.addEventListener("click", () => {
+  const vorher = form.kartenArt;
+  form.kartenArt = b.dataset.art;
+  renderKartenArt();
+  if ((vorher === "anreise") !== (form.kartenArt === "anreise")) { form.route = null; planeRoute(); }
+}));
 feld("viaNeu").addEventListener("click", () => {
   form.vias.push({ name: "", lat: null, lon: null });
   renderVias();
@@ -2114,7 +2165,7 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     ziel: thema ? feld("eZiel").value.trim() : "",
     zielLat: thema ? form.zLat : null, zielLon: thema ? form.zLon : null,
     route: thema && form.route ? form.route : null,
-    landKarte: thema ? form.landKarte : false,
+    kartenArt: thema ? form.kartenArt : "normal",
     vias: thema ? form.vias.filter(v => Number.isFinite(v.lat)).map(v => ({ name: (v.name || "").trim(), lat: v.lat, lon: v.lon })) : [],
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
@@ -2370,7 +2421,7 @@ async function statischeKarte(opt = {}) {
     return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
   };
   let z = 14;
-  for (; z > 1; z--) {
+  for (; z > 0; z--) {
     const p = alle.map(([la, lo]) => px(la, lo, z));
     const bx = Math.max(...p.map(q => q[0])) - Math.min(...p.map(q => q[0]));
     const by = Math.max(...p.map(q => q[1])) - Math.min(...p.map(q => q[1]));
@@ -2517,14 +2568,16 @@ function bildLaden(url) {
   return new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = url; });
 }
 // Detailkarte (maximal skaliert) + Land klein in der freiesten Ecke
-async function tagesDetailKarte(datum, B, H, nummern) {
+const WELT = { name: "Welt", box: [[-56, -170], [72, 190]] };
+async function tagesDetailKarte(datum, B, H, nummern, art = kartenArtAm(datum)) {
   const pkt = tagesPunkte(datum, nummern);
   const linie = tagesLinie(datum);
   if (!pkt.length && !linie) return null;
   const detail = await statischeKarte({ punkte: pkt, linie, B, H, rand: Math.round(Math.min(B, H) * 0.11), max: true });
   if (!detail) return null;
   let land = null;
-  try { land = await landFuerTag(datum); } catch { land = null; }
+  if (art === "anreise") land = WELT;
+  else { try { land = await landFuerTag(datum); } catch { land = null; } }
   if (!land) return detail;
   const alle = [...pkt.map(q => [q.lat, q.lon]), ...(linie || [])];
   const lat = alle.map(q => q[0]), lon = alle.map(q => q[1]);
@@ -2902,7 +2955,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     // Tageskarte über die ganze Breite: Streckenabschnitt des Tages
     const pkt = tagesPunkte(datum, nummern);
     if (pkt.length) {
-      const tk = (themaAm(datum) || {}).landKarte
+      const tk = kartenArtAm(datum) !== "normal"
         ? await tagesDetailKarte(datum, 1400, 760, nummern)
         : await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70, linie: tagesLinie(datum) });
       if (tk) {
@@ -2911,6 +2964,37 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, th);
         y += th + 6;
       }
+    }
+    // 01.11.2026: Zusammenfassung bei Anreise und Detailansicht
+    const kArt = kartenArtAm(datum);
+    if (thema && kArt !== "normal") {
+      const rt = gueltigeRoute(thema);
+      const wege = [thema.ort, ...(thema.vias || []).map(v => v.name), thema.ziel].filter(Boolean);
+      schrift("bold", 7.5, D.gold);
+      doc.setCharSpace(1.2); doc.text(kArt === "anreise" ? "ZUSAMMENFASSUNG ANREISE" : "ZUSAMMENFASSUNG TAGESROUTE", R, y + 3); doc.setCharSpace(0);
+      y += 4.5;
+      doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.line(R, y, R + B, y);
+      y += 5;
+      schrift("bold", 8, D.grau); doc.text(kArt === "anreise" ? "Reiseweg" : "Tagesroute", R, y);
+      schrift("bold", 10, D.tinte);
+      const wegZ = doc.splitTextToSize(pdfText(wege.join("  –  ") || tagStrecke(datum).replace("→", "–")), B - 26);
+      doc.text(wegZ, R + 26, y);
+      y += (wegZ.length - 1) * 4.6 + 4.8;
+      schrift("normal", 9, D.grau);
+      const modusText = rt ? (rt.modus === "flug" ? "Flug (Luftlinie)" : { auto: "Auto", velo: "Velo", fuss: "zu Fuss" }[rt.modus] || "") : "Luftlinie";
+      const dauer = rt && rt.min ? `   ·   ca. ${dauerText(rt.min)}` : "";
+      doc.text(pdfText(`${formatZahlCH(kmTag, kmTag < 10 ? 1 : 0)} km   ·   ${modusText}${dauer}${(thema.vias || []).length ? `   ·   ${thema.vias.length} Zwischen${kArt === "anreise" ? "stopp" : "ziel"}${thema.vias.length === 1 ? "" : "e"}` : ""}`), R + 26, y);
+      y += 6.5;
+      schrift("bold", 8, D.grau); doc.text("Stationen", R, y);
+      if (!subs.length) { schrift("normal", 9, D.grau); doc.text("keine", R + 26, y); y += 5; }
+      for (const e of subs) {
+        platz(5);
+        const pw = pille(nummern.get(e.id), R + 26, y, false);
+        schrift("normal", 9, D.tinte);
+        doc.text(doc.splitTextToSize(pdfText(`${e.titel || e.ort || "Sub-Thema"}${e.ort && e.titel ? `  (${e.ort})` : ""}`), B - 30 - pw)[0], R + 28 + pw, y);
+        y += 5;
+      }
+      y += 4;
     }
     // Einleitung (Text des Haupteintrags)
     if (thema && thema.text) {
@@ -3235,7 +3319,7 @@ async function erstelleTitelkarte(datum) {
   const GH = Math.round(W * 0.66);   // Option Detailansicht: Karte über die ganze Breite
   try {
     const punkte = tagesPunkte(datum);
-    if (punkte.length && (themaAm(datum) || {}).landKarte) {
+    if (punkte.length && kartenArtAm(datum) !== "normal") {
       const k = await tagesDetailKarte(datum, W, GH);
       if (k) gross = await bildLaden(k.url);
     } else if (punkte.length) {
@@ -3284,6 +3368,13 @@ async function erstelleTitelkarte(datum) {
     g.fillStyle = PK.gold;
     g.fillText(zeile, R, y + 44);
     y += 64;
+    const vias = (t && t.vias || []).map(v => v.name).filter(Boolean);
+    if (vias.length && kartenArtAm(datum) !== "normal") {
+      g.fillStyle = "#8b93a3"; g.font = `500 28px ${PK.sans}`;
+      const ueber = umbrechen(g, `über ${vias.join(" · ")}`, W);
+      ueber.forEach(z => { g.fillText(z, R, y + 30); y += 40; });
+      y += 6;
+    }
   }
   y = karte ? Math.max(y + 30, KY + KH + 34) : y + 30;
   if (gross) {
