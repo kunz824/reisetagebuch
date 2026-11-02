@@ -1096,7 +1096,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "02.11.2026 · 21:45";
+const APP_VERSION = "02.11.2026 · 22:15";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2165,7 +2165,7 @@ function setzePunktMeldung(k, text) { feld(ORTSFELDER[k].info).textContent = tex
 // 174.7633"); sie setzen den Kartenpunkt direkt. Für PDF und WhatsApp
 // werden Felder mit Koordinaten (oder leere Felder mit Kartenpunkt) durch
 // die Gemeinde/Stadt ersetzt -- automatisch über OpenStreetMap, einmal
-// ermittelt und dann gemerkt (daten.ortNamen). Die Daten selbst bleiben
+// ermittelt und dann gemerkt (daten.ortschaften). Die Daten selbst bleiben
 // unverändert.
 // ═════════════════════════════════════════════════════════════════════
 // Erkennt Koordinaten irgendwo im Text, in den üblichen Schreibweisen:
@@ -2213,15 +2213,14 @@ function ortsnamenBedarf() {
 }
 let berichtTausch = false, speichernNachTausch = false;
 async function ergaenzeOrtsnamen(fortschritt) {
-  daten.ortNamen = daten.ortNamen || {};
-  const offen = [...new Map(ortsnamenBedarf().filter(b => !daten.ortNamen[b.key]).map(b => [b.key, b])).values()];
+  daten.ortschaften = daten.ortschaften || {};
+  const offen = [...new Map(ortsnamenBedarf().filter(b => !daten.ortschaften[b.key]).map(b => [b.key, b])).values()];
   let neu = false;
   for (let i = 0; i < offen.length; i++) {
     fortschritt && fortschritt(`Ortsnamen ${i + 1} von ${offen.length} …`);
     if (i) await new Promise(ok => setTimeout(ok, 1100));   // Nominatim: max. 1 Anfrage pro Sekunde
-    let name = await ortsnameVon(offen[i].la, offen[i].lo);
-    if (!name) { await new Promise(ok => setTimeout(ok, 1100)); name = await ortsnameVon(offen[i].la, offen[i].lo, 8); }
-    if (name) { daten.ortNamen[offen[i].key] = name; neu = true; }
+    const name = await naechsteOrtschaft(offen[i].la, offen[i].lo);
+    if (name) { daten.ortschaften[offen[i].key] = name; neu = true; }
   }
   if (neu) await speichere();
 }
@@ -2231,7 +2230,7 @@ async function mitOrtsnamen(fn, fortschritt) {
   try { await ergaenzeOrtsnamen(fortschritt); } catch { /* offline: Koordinaten bleiben */ }
   const zurueck = [];
   for (const b of ortsnamenBedarf()) {
-    const name = daten.ortNamen[b.key] || (b.koordText ? "" : null);   // nie Koordinaten im Bericht
+    const name = daten.ortschaften[b.key] || (b.koordText ? "" : null);   // nie Koordinaten im Bericht
     if (name === null) continue;
     const alt = b.obj[b.feldName];
     zurueck.push(() => { b.obj[b.feldName] = alt; });
@@ -2247,6 +2246,36 @@ async function mitOrtsnamen(fn, fortschritt) {
 }
 
 // Ortsname zu Koordinaten über OpenStreetMap (Nominatim)
+// 02.11.2026: nächstgelegene Ortschaft (Stadt, Kleinstadt, Dorf) -- keine
+// Bezirke, Stadtteile oder Regionen. Über OpenStreetMap (Overpass): alle
+// Ortschaften im Umkreis, die nächste gewinnt; Weiler nur, wenn sonst nichts
+// in der Nähe ist. Rückfall: Nominatim, aber nur Stadt/Ort/Dorf.
+async function naechsteOrtschaft(lat, lon) {
+  for (const radius of [8000, 25000, 60000]) {
+    try {
+      const q = `[out:json][timeout:20];node(around:${radius},${lat},${lon})[place~"^(city|town|village|hamlet)$"][name];out body qt 200;`;
+      const a = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ data: q }),
+      });
+      if (!a.ok) throw new Error(`Overpass ${a.status}`);
+      const j = await a.json();
+      const orte = (j.elements || []).filter(e => e.tags && e.tags.name && Number.isFinite(e.lat));
+      const name = e => e.tags["name:de"] || e.tags.name;
+      const naechste = liste => liste.sort((x, y) => km([lat, lon], [x.lat, x.lon]) - km([lat, lon], [y.lat, y.lon]))[0];
+      const ortschaft = naechste(orte.filter(e => e.tags.place !== "hamlet"));
+      if (ortschaft) return name(ortschaft);
+      if (radius === 60000 && orte.length) return name(naechste(orte));   // nur Weiler in der Nähe
+    } catch { break; }   // Overpass nicht erreichbar -> Nominatim
+  }
+  try {
+    const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=de&lat=${lat}&lon=${lon}`);
+    if (!a.ok) return "";
+    const ad = (await a.json()).address || {};
+    return ad.city || ad.town || ad.village || ad.hamlet || "";
+  } catch { return ""; }
+}
 async function ortsnameVon(lat, lon, zoom = 12) {
   try {
     const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=${zoom}&accept-language=de&lat=${lat}&lon=${lon}`);
@@ -2265,7 +2294,7 @@ function standortFuer(k) {
     form[f.lon] = Number(pos.coords.longitude.toFixed(5));
     renderPunktInfo(k);
     if (!feld(f.eingabe).value.trim()) {
-      const name = await ortsnameVon(form[f.lat], form[f.lon]);
+      const name = await naechsteOrtschaft(form[f.lat], form[f.lon]);
       if (name && !feld(f.eingabe).value.trim()) feld(f.eingabe).value = name;
     }
   }, () => {
