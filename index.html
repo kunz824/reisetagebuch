@@ -498,6 +498,14 @@
     overflow: hidden;
   }
   .leaflet-container { font-family: var(--font); background: #1b1f26; }
+  .schreibhilfe { display: flex; flex-direction: column; gap: 6px; margin-top: -4px; }
+  .schreibhilfe .knopf-reihe { display: flex; flex-direction: row; gap: 8px; }
+  .schreibhilfe .knopf-reihe button { flex: 1; font-size: 13.5px; padding: 0 6px; }
+  .link-knopf { background: none; border: none; color: var(--accent); font: inherit; font-size: 13px; padding: 0; cursor: pointer; align-self: flex-start; }
+  .text-vorschlag { background: var(--bg); border: 1px solid var(--accent-soft); border-radius: 10px; padding: 12px; }
+  .vorschlag-titel { font-weight: 600; margin-bottom: 6px; }
+  .vorschlag-text { white-space: pre-wrap; font-family: var(--font-tagebuch); font-size: 15px; line-height: 1.5; }
+  .vorschlag-text mark { background: rgba(212,162,78,0.28); color: inherit; border-radius: 3px; }
   .schalter-zeile { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text); cursor: pointer; }
   .schalter-zeile input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
   .schalter-zeile small { color: var(--text-dim); font-size: 12px; line-height: 1.4; }
@@ -894,7 +902,7 @@
       </div>
       <p class="rolle-hinweis" id="eRolle"></p>
       <label>Titel
-        <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off">
+        <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off" lang="de-CH" spellcheck="true" autocorrect="on">
       </label>
       <div id="ortBlock" style="display:flex;flex-direction:column;gap:12px">
       <label><span id="eOrtLabel">Ort</span>
@@ -945,8 +953,26 @@
         </div>
       </div>
       <label>Tagebuch
-        <textarea id="eText" placeholder="Was hast du heute erlebt?"></textarea>
+        <textarea id="eText" placeholder="Was hast du heute erlebt?" lang="de-CH" spellcheck="true" autocorrect="on" autocapitalize="sentences"></textarea>
       </label>
+      <!-- 02.11.2026: Schreibhilfe (Deutsch, Schweiz) -->
+      <div class="schreibhilfe">
+        <div class="knopf-reihe">
+          <button type="button" class="btn-abbrechen" id="textPruefen">✓ Rechtschreibung</button>
+          <button type="button" class="btn-abbrechen" id="textVerbessern">✨ Lebendiger schreiben</button>
+        </div>
+        <p class="hinweis" id="schreibStatus" hidden></p>
+        <button type="button" class="link-knopf" id="textZurueck" hidden>↶ Rückgängig</button>
+        <div id="textVorschlag" class="text-vorschlag" hidden>
+          <p class="hinweis" style="margin:0 0 6px">Vorschlag (Schweizer Hochdeutsch):</p>
+          <div id="vorschlagTitel" class="vorschlag-titel"></div>
+          <div id="vorschlagText" class="vorschlag-text"></div>
+          <div class="knopf-reihe" style="margin-top:10px">
+            <button type="button" class="btn-speichern" id="vorschlagUebernehmen">Übernehmen</button>
+            <button type="button" class="btn-abbrechen" id="vorschlagVerwerfen">Verwerfen</button>
+          </div>
+        </div>
+      </div>
       <div id="fotoBlock">
         <p class="hinweis" style="margin-bottom:6px">Fotos</p>
         <div class="foto-raster" id="formFotos"></div>
@@ -1001,6 +1027,16 @@
     <p class="hinweis" style="margin-top:8px">PDF: Reisebuch zum Sichern oder Senden. Vorschau: zeigt das PDF Seite für Seite. Drucken: druckt dieselben Seiten. Speichern: Sicherung als Datei (z.B. ins iCloud Drive).</p>
     <h2>Vorschau</h2>
     <div id="berichtDruck"></div>
+
+    <h2>Schreibhilfe</h2>
+    <div class="formular">
+      <p class="hinweis"><b>✓ Rechtschreibung</b> funktioniert ohne Einrichtung (LanguageTool, Deutsch Schweiz).<br>
+      <b>✨ Lebendiger schreiben</b> nutzt Claude und braucht einen eigenen API-Schlüssel von console.anthropic.com (kostet pro Text wenige Rappen). Der Schlüssel bleibt nur auf diesem Gerät.</p>
+      <label>Claude API-Schlüssel
+        <input type="password" id="kiSchluessel" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+      <p class="hinweis" id="kiStatus"></p>
+    </div>
 
     <h2>Datensicherung</h2>
     <div class="formular">
@@ -1064,7 +1100,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "02.11.2026 · 08:30";
+const APP_VERSION = "02.11.2026 · 21:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1182,6 +1218,7 @@ let daten = leereDaten();
 function setzeStand(text) { document.getElementById("speicherStand").textContent = text; }
 
 async function speichere() {
+  if (berichtTausch) { speichernNachTausch = true; return; }   // nie mit Bericht-Ortsnamen speichern
   daten.meta = Object.assign({}, daten.meta, { geaendert: new Date().toISOString() });
   try {
     await idb.put("daten", daten, "tagebuch");
@@ -1621,6 +1658,9 @@ function formularLeeren() {
   form.vias = [];
   form.kartenArt = "detail";
   form.zielAuto = true;
+  if (typeof schreibStatus === "function") {
+    try { schreibStatus(""); feld("textVorschlag").hidden = true; feld("textZurueck").hidden = true; textVorher = null; } catch { /* beim Start */ }
+  }
   form.art = "auto";
   form.fotos = [];
   form.neu = new Set();
@@ -2013,6 +2053,8 @@ function renderVias() {
 async function sucheVia(v, q, treffer) {
   treffer.innerHTML = "";
   if (!q) return;
+  const koord = koordAusText(q);
+  if (koord) { v.lat = koord[0]; v.lon = koord[1]; v.name = q; renderVias(); planeRouteBald(); return; }
   const info = document.createElement("p");
   info.className = "hinweis";
   info.textContent = "Suche …";
@@ -2121,6 +2163,74 @@ function renderPunktInfoNur(k) {
 }
 function setzePunktMeldung(k, text) { feld(ORTSFELDER[k].info).textContent = text; }
 
+// ═════════════════════════════════════════════════════════════════════
+// 02.11.2026: Koordinaten in der App, Ortsnamen in den Berichten
+// In jedes Ortsfeld dürfen Koordinaten eingetippt werden ("-36.8485,
+// 174.7633"); sie setzen den Kartenpunkt direkt. Für PDF und WhatsApp
+// werden Felder mit Koordinaten (oder leere Felder mit Kartenpunkt) durch
+// die Gemeinde/Stadt ersetzt -- automatisch über OpenStreetMap, einmal
+// ermittelt und dann gemerkt (daten.ortNamen). Die Daten selbst bleiben
+// unverändert.
+// ═════════════════════════════════════════════════════════════════════
+const KOORD_RE = /^\s*(-?\d{1,2}(?:[.,]\d+)?)\s*°?\s*[,;/\s]\s*(-?\d{1,3}(?:[.,]\d+)?)\s*°?\s*$/;
+function koordAusText(t) {
+  const m = KOORD_RE.exec(t || "");
+  if (!m) return null;
+  const la = Number(m[1].replace(",", ".")), lo = Number(m[2].replace(",", "."));
+  return Math.abs(la) <= 90 && Math.abs(lo) <= 180 ? [Number(la.toFixed(5)), Number(lo.toFixed(5))] : null;
+}
+const istKoordinate = t => !!koordAusText(t);
+const ortSchluessel = (la, lo) => `${la.toFixed(3)},${lo.toFixed(3)}`;
+// Alle Namensfelder, die für Berichte einen Ortsnamen brauchen
+function ortsnamenBedarf() {
+  const liste = [];
+  const pruefe = (obj, feldName, la, lo) => {
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    const name = obj[feldName] || "";
+    if (name.trim() && !istKoordinate(name)) return;
+    liste.push({ obj, feldName, key: ortSchluessel(la, lo), la, lo });
+  };
+  for (const e of daten.eintraege) {
+    pruefe(e, "ort", e.lat, e.lon);
+    pruefe(e, "ziel", e.zielLat, e.zielLon);
+    for (const v of e.vias || []) pruefe(v, "name", v.lat, v.lon);
+  }
+  return liste;
+}
+let berichtTausch = false, speichernNachTausch = false;
+async function ergaenzeOrtsnamen(fortschritt) {
+  daten.ortNamen = daten.ortNamen || {};
+  const offen = [...new Map(ortsnamenBedarf().filter(b => !daten.ortNamen[b.key]).map(b => [b.key, b])).values()];
+  let neu = false;
+  for (let i = 0; i < offen.length; i++) {
+    fortschritt && fortschritt(`Ortsnamen ${i + 1} von ${offen.length} …`);
+    if (i) await new Promise(ok => setTimeout(ok, 1100));   // Nominatim: max. 1 Anfrage pro Sekunde
+    const name = await ortsnameVon(offen[i].la, offen[i].lo);
+    if (name) { daten.ortNamen[offen[i].key] = name; neu = true; }
+  }
+  if (neu) await speichere();
+}
+// Bericht erstellen mit Ortsnamen statt Koordinaten; danach alles zurück
+async function mitOrtsnamen(fn, fortschritt) {
+  if (berichtTausch) return fn();
+  try { await ergaenzeOrtsnamen(fortschritt); } catch { /* offline: Koordinaten bleiben */ }
+  const zurueck = [];
+  for (const b of ortsnamenBedarf()) {
+    const name = daten.ortNamen[b.key];
+    if (!name) continue;
+    const alt = b.obj[b.feldName];
+    zurueck.push(() => { b.obj[b.feldName] = alt; });
+    b.obj[b.feldName] = name;
+  }
+  berichtTausch = true;
+  try { return await fn(); }
+  finally {
+    zurueck.reverse().forEach(f => f());
+    berichtTausch = false;
+    if (speichernNachTausch) { speichernNachTausch = false; speichere(); }
+  }
+}
+
 // Ortsname zu Koordinaten über OpenStreetMap (Nominatim)
 async function ortsnameVon(lat, lon) {
   try {
@@ -2153,6 +2263,12 @@ async function sucheOrtFuer(k) {
   const treffer = feld(f.treffer);
   treffer.innerHTML = "";
   if (!q) { setzePunktMeldung(k, `Zuerst einen Ort eingeben, z.B. ${f.beispiel}.`); return; }
+  const koord = koordAusText(q);
+  if (koord) {   // Koordinaten: Punkt direkt setzen (im Bericht erscheint der Ortsname)
+    form[f.lat] = koord[0]; form[f.lon] = koord[1];
+    renderPunktInfo(k);
+    return;
+  }
   setzePunktMeldung(k, "Suche …");
   try {
     const a = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=de&q=${encodeURIComponent(q)}`);
@@ -2190,6 +2306,8 @@ for (const k of Object.keys(ORTSFELDER)) {
 // Ort eingetippt, aber keinen Treffer angetippt? Dann beim Speichern den
 // ersten Treffer der Ortssuche als Kartenpunkt übernehmen.
 async function ersterTreffer(q) {
+  const koord = koordAusText(q);
+  if (koord) return koord;
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
@@ -2916,7 +3034,10 @@ async function bildAusschnitt(id, wmm, hmm, text = "") {
 // Dateiname des Reisebuchs bleibt immer gleich -> im OneDrive "Ersetzen"
 function reisebuchName() { return `${dateiName(reiseTitel())}-reisebuch`; }
 
-async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
+function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
+  return mitOrtsnamen(() => erstellePdfIntern(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung), fortschritt);
+}
+async function erstellePdfIntern(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
   await ladeJsPdf();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
@@ -3593,7 +3714,7 @@ async function oeffneDialogTage(tage) {
   const einzeln = dialogKnopf("Karte für Karte teilen", "btn-abbrechen", () => teileNaechste());
   einzeln.disabled = true;
   dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
-    const text = whatsappText(tage);
+    const text = await mitOrtsnamen(async () => whatsappText(tage), dialogStatus);
     if (navigator.share) { try { await navigator.share({ text }); } catch { /* abgebrochen */ } }
     else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   });
@@ -3607,7 +3728,7 @@ async function oeffneDialogTage(tage) {
   const karten = [];
   const nummern = subNummern();
   try {
-    for (const datum of tage) {
+    await mitOrtsnamen(async () => { for (const datum of tage) {
       const tagNr = String(tagNummer(datum) || 0).padStart(2, "0");
       const titel = await erstelleTitelkarte(datum);
       karten.push(await canvasZuDatei(titel, `tag${tagNr}-0-tagesziel.jpg`));
@@ -3619,7 +3740,7 @@ async function oeffneDialogTage(tage) {
           karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}${teil ? `-${teil + 1}` : ""}.jpg`));
         }
       }
-    }
+    } }, dialogStatus);
   } catch (fehler) {
     console.error(fehler);
     dialogStatus("Die Postkarten konnten nicht erstellt werden. Nur Text oder PDF nutzen.");
@@ -3668,6 +3789,147 @@ function oeffnePdfDialog() {
   return knopf;
 }
 document.getElementById("pdfBtn").addEventListener("click", () => oeffnePdfDialog());
+
+// ═════════════════════════════════════════════════════════════════════
+// 02.11.2026: Schreibhilfe für Titel und Text (Deutsch, Schweiz)
+//  ✓ Rechtschreibung: LanguageTool (frei, de-CH, ss statt ß). Korrekturen
+//    werden direkt übernommen und markiert, "Rückgängig" stellt den alten
+//    Text wieder her.
+//  ✨ Lebendiger schreiben: Claude überarbeitet Rechtschreibung, Grammatik
+//    und Satzstellung, ohne Inhalt oder Fakten zu verändern. Vorschlag mit
+//    Übernehmen/Verwerfen. Braucht einen eigenen API-Schlüssel (nur lokal).
+// ═════════════════════════════════════════════════════════════════════
+const KI_MODELL = "claude-sonnet-5-5";
+let textVorher = null;
+function schreibStatus(t) { const el = feld("schreibStatus"); el.textContent = t || ""; el.hidden = !t; }
+function merkeVorher() {
+  textVorher = { titel: feld("eTitel").value, text: feld("eText").value };
+  feld("textZurueck").hidden = false;
+}
+async function languageTool(text) {
+  if (!text.trim()) return { text, n: 0 };
+  const a = await fetch("https://api.languagetool.org/v2/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ text, language: "de-CH", level: "default" }),
+  });
+  if (a.status === 429) throw new Error("Zu viele Prüfungen in kurzer Zeit. Bitte eine Minute warten.");
+  if (!a.ok) throw new Error(`Prüfung nicht möglich (${a.status}).`);
+  const j = await a.json();
+  const treffer = (j.matches || [])
+    .filter(m => m.replacements && m.replacements.length && (m.rule && m.rule.issueType) !== "style")
+    .sort((x, y) => y.offset - x.offset);
+  let neu = text, n = 0, letzte = Infinity;
+  for (const m of treffer) {
+    if (m.offset + m.length > letzte) continue;   // überlappende Treffer überspringen
+    neu = neu.slice(0, m.offset) + m.replacements[0].value + neu.slice(m.offset + m.length);
+    letzte = m.offset; n++;
+  }
+  return { text: neu, n };
+}
+feld("textPruefen").addEventListener("click", async () => {
+  const knopf = feld("textPruefen");
+  knopf.disabled = true;
+  feld("textVorschlag").hidden = true;
+  schreibStatus("Rechtschreibung wird geprüft …");
+  try {
+    const t = await languageTool(feld("eTitel").value);
+    const x = await languageTool(feld("eText").value);
+    const n = t.n + x.n;
+    if (!n) { schreibStatus("✓ Keine Fehler gefunden."); return; }
+    merkeVorher();
+    feld("eTitel").value = t.text;
+    feld("eText").value = x.text;
+    schreibStatus(`✓ ${n} Korrektur${n === 1 ? "" : "en"} übernommen. Bitte kurz durchlesen.`);
+  } catch (f) {
+    schreibStatus(navigator.onLine === false ? "Offline: Die Prüfung braucht Internet." : f.message);
+  } finally { knopf.disabled = false; }
+});
+feld("textZurueck").addEventListener("click", () => {
+  if (!textVorher) return;
+  feld("eTitel").value = textVorher.titel;
+  feld("eText").value = textVorher.text;
+  textVorher = null;
+  feld("textZurueck").hidden = true;
+  schreibStatus("Ursprünglicher Text wiederhergestellt.");
+});
+const kiSchluessel = () => (lsGet("rt_ki_schluessel") || "").trim();
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* egal */ } }
+function renderKiStatus() {
+  feld("kiSchluessel").value = kiSchluessel();
+  feld("kiStatus").textContent = kiSchluessel() ? "✓ Schlüssel gespeichert (nur auf diesem Gerät)." : "Kein Schlüssel: «Lebendiger schreiben» ist deaktiviert.";
+}
+feld("kiSchluessel").addEventListener("change", ev => { lsSet("rt_ki_schluessel", ev.target.value.trim()); renderKiStatus(); });
+renderKiStatus();
+async function claudeUeberarbeiten(titel, text, kontext) {
+  const system = [
+    "Du bist Lektor für ein persönliches Reisetagebuch.",
+    "Schreibe in Schweizer Hochdeutsch (de-CH): nie ß, immer ss; Schweizer Wörter und Ausdrücke beibehalten.",
+    "Korrigiere Rechtschreibung, Grammatik und Zeichensetzung.",
+    "Gestalte Satzanfänge und Satzstellung abwechslungsreicher und lebendiger, mit natürlichen Übergängen.",
+    "Behalte Perspektive (ich/wir), Zeitform, Inhalt, Fakten, Namen, Zahlen und Orte genau bei. Erfinde nichts dazu.",
+    "Länge etwa gleich (höchstens 20 % länger). Absätze beibehalten. Keine Emojis hinzufügen.",
+    "Antworte nur mit JSON: {\"titel\": \"…\", \"text\": \"…\"} ohne weitere Erklärung.",
+  ].join("\n");
+  const a = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": kiSchluessel(),
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: KI_MODELL, max_tokens: 2000, system,
+      messages: [{ role: "user", content: `${kontext}\n\nTitel: ${titel}\n\nText:\n${text}` }],
+    }),
+  });
+  if (a.status === 401) throw new Error("Der API-Schlüssel ist ungültig (Register Bericht → Schreibhilfe).");
+  if (a.status === 429 || a.status === 529) throw new Error("Claude ist gerade ausgelastet. Bitte gleich nochmals versuchen.");
+  if (!a.ok) throw new Error(`Überarbeitung nicht möglich (${a.status}).`);
+  const j = await a.json();
+  const roh = ((j.content || []).find(c => c.type === "text") || {}).text || "";
+  const m = roh.match(/\{[\s\S]*\}/);
+  const erg = m ? JSON.parse(m[0]) : { titel, text: roh.trim() };
+  const ohneSz = t => String(t || "").replace(/ß/g, "ss");
+  return { titel: ohneSz(erg.titel || titel), text: ohneSz(erg.text || text) };
+}
+let vorschlag = null;
+feld("textVerbessern").addEventListener("click", async () => {
+  if (!kiSchluessel()) {
+    schreibStatus("Für «Lebendiger schreiben» zuerst im Register Bericht unter Schreibhilfe den Claude API-Schlüssel eintragen. «✓ Rechtschreibung» geht auch ohne.");
+    return;
+  }
+  const titel = feld("eTitel").value.trim(), text = feld("eText").value.trim();
+  if (!titel && !text) { schreibStatus("Zuerst einen Titel oder Text schreiben."); return; }
+  const knopf = feld("textVerbessern");
+  knopf.disabled = true;
+  feld("textVorschlag").hidden = true;
+  schreibStatus("✨ Text wird überarbeitet …");
+  try {
+    const art = aufgeloesteArt() === "thema" ? "Haupteintrag des Tages" : "Sub-Eintrag";
+    const kontext = `Eintrag: ${art}, ${datumLang(feld("eDatum").value)}${feld("eOrt").value && !istKoordinate(feld("eOrt").value) ? `, Ort: ${feld("eOrt").value}` : ""}. Reise: ${reiseTitel()}.`;
+    vorschlag = await claudeUeberarbeiten(titel, text, kontext);
+    feld("vorschlagTitel").textContent = vorschlag.titel;
+    feld("vorschlagText").textContent = vorschlag.text;
+    feld("textVorschlag").hidden = false;
+    schreibStatus("");
+    feld("textVorschlag").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (f) {
+    schreibStatus(navigator.onLine === false ? "Offline: Die Überarbeitung braucht Internet." : f.message);
+  } finally { knopf.disabled = false; }
+});
+feld("vorschlagUebernehmen").addEventListener("click", () => {
+  if (!vorschlag) return;
+  merkeVorher();
+  if (feld("eTitel").value.trim()) feld("eTitel").value = vorschlag.titel;
+  feld("eText").value = vorschlag.text;
+  feld("textVorschlag").hidden = true;
+  vorschlag = null;
+  schreibStatus("✓ Übernommen. Mit «Eintrag speichern» sichern.");
+});
+feld("vorschlagVerwerfen").addEventListener("click", () => { feld("textVorschlag").hidden = true; vorschlag = null; schreibStatus(""); });
 
 // ── Datensicherung ───────────────────────────────────────────────────
 // Anzeige "letzte Sicherung" und Erinnerung im Tagebuch
