@@ -957,10 +957,7 @@
       </label>
       <!-- 02.11.2026: Schreibhilfe (Deutsch, Schweiz) -->
       <div class="schreibhilfe">
-        <div class="knopf-reihe">
-          <button type="button" class="btn-abbrechen" id="textPruefen">✓ Rechtschreibung</button>
-          <button type="button" class="btn-abbrechen" id="textVerbessern">✨ Lebendiger schreiben</button>
-        </div>
+        <button type="button" class="btn-abbrechen" id="textVerbessern">✨ Text prüfen &amp; verbessern</button>
         <p class="hinweis" id="schreibStatus" hidden></p>
         <button type="button" class="link-knopf" id="textZurueck" hidden>↶ Rückgängig</button>
         <div id="textVorschlag" class="text-vorschlag" hidden>
@@ -1030,8 +1027,7 @@
 
     <h2>Schreibhilfe</h2>
     <div class="formular">
-      <p class="hinweis"><b>✓ Rechtschreibung</b> funktioniert ohne Einrichtung (LanguageTool, Deutsch Schweiz).<br>
-      <b>✨ Lebendiger schreiben</b> nutzt Claude und braucht einen eigenen API-Schlüssel von console.anthropic.com (kostet pro Text wenige Rappen). Der Schlüssel bleibt nur auf diesem Gerät.</p>
+      <p class="hinweis"><b>✨ Text prüfen &amp; verbessern</b> im Eintrag: Mit Claude-Schlüssel werden Rechtschreibung korrigiert und Sätze lebendiger formuliert (Vorschlag zum Übernehmen). Ohne Schlüssel wird nur die Rechtschreibung geprüft (LanguageTool, Deutsch Schweiz). Der Schlüssel bleibt nur auf diesem Gerät.</p>
       <label>Claude API-Schlüssel
         <input type="password" id="kiSchluessel" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
       </label>
@@ -1100,7 +1096,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "02.11.2026 · 21:00";
+const APP_VERSION = "02.11.2026 · 21:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2172,12 +2168,29 @@ function setzePunktMeldung(k, text) { feld(ORTSFELDER[k].info).textContent = tex
 // ermittelt und dann gemerkt (daten.ortNamen). Die Daten selbst bleiben
 // unverändert.
 // ═════════════════════════════════════════════════════════════════════
-const KOORD_RE = /^\s*(-?\d{1,2}(?:[.,]\d+)?)\s*°?\s*[,;/\s]\s*(-?\d{1,3}(?:[.,]\d+)?)\s*°?\s*$/;
+// Erkennt Koordinaten irgendwo im Text, in den üblichen Schreibweisen:
+//   -36.8485, 174.7633 · 36.8485° S, 174.7633° E · 36°50'54.6"S 174°45'47.9"E
+const KOORD_DMS = /(\d{1,2})\s*°\s*(\d{1,2})\s*['′’]\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:["″”]|'')?)?\s*([NSns])[\s,;]*(\d{1,3})\s*°\s*(\d{1,2})\s*['′’]\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:["″”]|'')?)?\s*([EWOewo])/;
+const KOORD_HEM = /(\d{1,2}(?:\.\d+)?)\s*°?\s*([NSns])\b[\s,;]*(\d{1,3}(?:\.\d+)?)\s*°?\s*([EWOewo])\b/;
+const KOORD_DEZ = /(-?\d{1,2}\.\d{2,})\s*°?\s*[,;/\s]\s*(-?\d{1,3}\.\d{2,})/;
+const KOORD_GANZ = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*[,;/\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
 function koordAusText(t) {
-  const m = KOORD_RE.exec(t || "");
-  if (!m) return null;
-  const la = Number(m[1].replace(",", ".")), lo = Number(m[2].replace(",", "."));
-  return Math.abs(la) <= 90 && Math.abs(lo) <= 180 ? [Number(la.toFixed(5)), Number(lo.toFixed(5))] : null;
+  const s = String(t || "");
+  const zahl = x => Number(String(x || 0).replace(",", "."));
+  let la = null, lo = null, m;
+  if ((m = KOORD_DMS.exec(s))) {
+    la = zahl(m[1]) + zahl(m[2]) / 60 + zahl(m[3]) / 3600;
+    lo = zahl(m[5]) + zahl(m[6]) / 60 + zahl(m[7]) / 3600;
+    if (/[Ss]/.test(m[4])) la = -la;
+    if (/[Ww]/.test(m[8])) lo = -lo;
+  } else if ((m = KOORD_HEM.exec(s))) {
+    la = zahl(m[1]) * (/[Ss]/.test(m[2]) ? -1 : 1);
+    lo = zahl(m[3]) * (/[Ww]/.test(m[4]) ? -1 : 1);
+  } else if ((m = KOORD_DEZ.exec(s) || KOORD_GANZ.exec(s))) {
+    la = zahl(m[1]); lo = zahl(m[2]);
+  }
+  if (la === null || !Number.isFinite(la) || !Number.isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) return null;
+  return [Number(la.toFixed(5)), Number(lo.toFixed(5))];
 }
 const istKoordinate = t => !!koordAusText(t);
 const ortSchluessel = (la, lo) => `${la.toFixed(3)},${lo.toFixed(3)}`;
@@ -2185,10 +2198,11 @@ const ortSchluessel = (la, lo) => `${la.toFixed(3)},${lo.toFixed(3)}`;
 function ortsnamenBedarf() {
   const liste = [];
   const pruefe = (obj, feldName, la, lo) => {
-    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
     const name = obj[feldName] || "";
-    if (name.trim() && !istKoordinate(name)) return;
-    liste.push({ obj, feldName, key: ortSchluessel(la, lo), la, lo });
+    const imText = koordAusText(name);
+    if (name.trim() && !imText) return;   // normaler Ortsname
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) { if (!imText) return; [la, lo] = imText; }
+    liste.push({ obj, feldName, key: ortSchluessel(la, lo), la, lo, koordText: !!imText });
   };
   for (const e of daten.eintraege) {
     pruefe(e, "ort", e.lat, e.lon);
@@ -2205,7 +2219,8 @@ async function ergaenzeOrtsnamen(fortschritt) {
   for (let i = 0; i < offen.length; i++) {
     fortschritt && fortschritt(`Ortsnamen ${i + 1} von ${offen.length} …`);
     if (i) await new Promise(ok => setTimeout(ok, 1100));   // Nominatim: max. 1 Anfrage pro Sekunde
-    const name = await ortsnameVon(offen[i].la, offen[i].lo);
+    let name = await ortsnameVon(offen[i].la, offen[i].lo);
+    if (!name) { await new Promise(ok => setTimeout(ok, 1100)); name = await ortsnameVon(offen[i].la, offen[i].lo, 8); }
     if (name) { daten.ortNamen[offen[i].key] = name; neu = true; }
   }
   if (neu) await speichere();
@@ -2216,8 +2231,8 @@ async function mitOrtsnamen(fn, fortschritt) {
   try { await ergaenzeOrtsnamen(fortschritt); } catch { /* offline: Koordinaten bleiben */ }
   const zurueck = [];
   for (const b of ortsnamenBedarf()) {
-    const name = daten.ortNamen[b.key];
-    if (!name) continue;
+    const name = daten.ortNamen[b.key] || (b.koordText ? "" : null);   // nie Koordinaten im Bericht
+    if (name === null) continue;
     const alt = b.obj[b.feldName];
     zurueck.push(() => { b.obj[b.feldName] = alt; });
     b.obj[b.feldName] = name;
@@ -2232,13 +2247,13 @@ async function mitOrtsnamen(fn, fortschritt) {
 }
 
 // Ortsname zu Koordinaten über OpenStreetMap (Nominatim)
-async function ortsnameVon(lat, lon) {
+async function ortsnameVon(lat, lon, zoom = 12) {
   try {
-    const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&accept-language=de&lat=${lat}&lon=${lon}`);
+    const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=${zoom}&accept-language=de&lat=${lat}&lon=${lon}`);
     if (!a.ok) return "";
     const j = await a.json();
     const ad = j.address || {};
-    return ad.city || ad.town || ad.village || ad.hamlet || ad.suburb || ad.municipality || ad.county || j.name || "";
+    return ad.city || ad.town || ad.village || ad.hamlet || ad.suburb || ad.municipality || ad.county || ad.state_district || ad.state || j.name || "";
   } catch { return ""; }
 }
 function standortFuer(k) {
@@ -3827,24 +3842,22 @@ async function languageTool(text) {
   }
   return { text: neu, n };
 }
-feld("textPruefen").addEventListener("click", async () => {
-  const knopf = feld("textPruefen");
-  knopf.disabled = true;
-  feld("textVorschlag").hidden = true;
+// Nur Rechtschreibung (ohne Schlüssel oder als Rückfall)
+async function nurRechtschreibung(hinweis = "") {
   schreibStatus("Rechtschreibung wird geprüft …");
   try {
     const t = await languageTool(feld("eTitel").value);
     const x = await languageTool(feld("eText").value);
     const n = t.n + x.n;
-    if (!n) { schreibStatus("✓ Keine Fehler gefunden."); return; }
+    if (!n) { schreibStatus(`✓ Keine Rechtschreibfehler gefunden.${hinweis}`); return; }
     merkeVorher();
     feld("eTitel").value = t.text;
     feld("eText").value = x.text;
-    schreibStatus(`✓ ${n} Korrektur${n === 1 ? "" : "en"} übernommen. Bitte kurz durchlesen.`);
+    schreibStatus(`✓ ${n} Korrektur${n === 1 ? "" : "en"} übernommen. Bitte kurz durchlesen.${hinweis}`);
   } catch (f) {
     schreibStatus(navigator.onLine === false ? "Offline: Die Prüfung braucht Internet." : f.message);
-  } finally { knopf.disabled = false; }
-});
+  }
+}
 feld("textZurueck").addEventListener("click", () => {
   if (!textVorher) return;
   feld("eTitel").value = textVorher.titel;
@@ -3858,7 +3871,7 @@ function lsGet(k) { try { return localStorage.getItem(k); } catch { return null;
 function lsSet(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* egal */ } }
 function renderKiStatus() {
   feld("kiSchluessel").value = kiSchluessel();
-  feld("kiStatus").textContent = kiSchluessel() ? "✓ Schlüssel gespeichert (nur auf diesem Gerät)." : "Kein Schlüssel: «Lebendiger schreiben» ist deaktiviert.";
+  feld("kiStatus").textContent = kiSchluessel() ? "✓ Schlüssel gespeichert (nur auf diesem Gerät)." : "Kein Schlüssel: nur Rechtschreibprüfung.";
 }
 feld("kiSchluessel").addEventListener("change", ev => { lsSet("rt_ki_schluessel", ev.target.value.trim()); renderKiStatus(); });
 renderKiStatus();
@@ -3897,16 +3910,17 @@ async function claudeUeberarbeiten(titel, text, kontext) {
 }
 let vorschlag = null;
 feld("textVerbessern").addEventListener("click", async () => {
-  if (!kiSchluessel()) {
-    schreibStatus("Für «Lebendiger schreiben» zuerst im Register Bericht unter Schreibhilfe den Claude API-Schlüssel eintragen. «✓ Rechtschreibung» geht auch ohne.");
-    return;
-  }
   const titel = feld("eTitel").value.trim(), text = feld("eText").value.trim();
   if (!titel && !text) { schreibStatus("Zuerst einen Titel oder Text schreiben."); return; }
   const knopf = feld("textVerbessern");
   knopf.disabled = true;
   feld("textVorschlag").hidden = true;
-  schreibStatus("✨ Text wird überarbeitet …");
+  if (!kiSchluessel()) {   // ohne Schlüssel: nur Rechtschreibung
+    await nurRechtschreibung(" Für lebendigere Formulierungen im Register Bericht den Claude-Schlüssel eintragen.");
+    knopf.disabled = false;
+    return;
+  }
+  schreibStatus("✨ Text wird geprüft und überarbeitet …");
   try {
     const art = aufgeloesteArt() === "thema" ? "Haupteintrag des Tages" : "Sub-Eintrag";
     const kontext = `Eintrag: ${art}, ${datumLang(feld("eDatum").value)}${feld("eOrt").value && !istKoordinate(feld("eOrt").value) ? `, Ort: ${feld("eOrt").value}` : ""}. Reise: ${reiseTitel()}.`;
@@ -3917,7 +3931,8 @@ feld("textVerbessern").addEventListener("click", async () => {
     schreibStatus("");
     feld("textVorschlag").scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (f) {
-    schreibStatus(navigator.onLine === false ? "Offline: Die Überarbeitung braucht Internet." : f.message);
+    if (navigator.onLine === false) schreibStatus("Offline: Die Prüfung braucht Internet.");
+    else await nurRechtschreibung(` (Überarbeitung nicht möglich: ${f.message})`);   // Rückfall
   } finally { knopf.disabled = false; }
 });
 feld("vorschlagUebernehmen").addEventListener("click", () => {
