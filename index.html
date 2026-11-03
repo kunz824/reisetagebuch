@@ -510,6 +510,10 @@
   .schalter-zeile input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
   .schalter-zeile small { color: var(--text-dim); font-size: 12px; line-height: 1.4; }
   .routen-block { display: flex; flex-direction: column; gap: 8px; }
+  .eintrag.sub + .eintrag.thema, .eintrag.thema + .eintrag.thema { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .routen-titel { margin: 6px 0 -4px; font-size: 13px; font-weight: 600; color: var(--accent); border-top: 1px solid var(--border); padding-top: 12px; }
+  .routen-titel small { font-weight: 400; color: var(--text-dim); }
+  #eThema { width: 100%; height: var(--feld-hoehe); border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; padding: 0 10px; }
   .routen-kopf { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
   .routen-modus { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
   .routen-modus button {
@@ -904,6 +908,14 @@
       <label>Titel
         <input type="text" id="eTitel" maxlength="80" placeholder="z.B. Tempel und Bambuswald" autocomplete="off" lang="de-CH" spellcheck="true" autocorrect="on">
       </label>
+      <!-- 03.11.2026: Text für die Berichte, getrennt von der Routenplanung -->
+      <label><span id="eAnzeigeLabel">Strecke (erscheint im Bericht)</span>
+        <input type="text" id="eAnzeige" maxlength="100" placeholder="z.B. Auckland – Rotorua" autocomplete="off" lang="de-CH" spellcheck="true" autocorrect="on">
+      </label>
+      <label id="eThemaBlock" hidden>Gehört zum Haupteintrag
+        <span class="auswahl-huelle"><select id="eThema"></select></span>
+      </label>
+      <p class="routen-titel">Routenplanung <small>(nur in der App, für Karte und Distanz)</small></p>
       <div id="ortBlock" style="display:flex;flex-direction:column;gap:12px">
       <label><span id="eOrtLabel">Ort</span>
         <span class="ort-zeile">
@@ -1096,7 +1108,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "03.11.2026 · 20:00";
+const APP_VERSION = "03.11.2026 · 22:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1193,6 +1205,12 @@ function normalisiere(roh) {
   if (!d.reise.speicherort) d.reise.speicherort = "OneDrive › 02_Ferien › New Zealand Reise › Reisetagebuch";
   d.eintraege = Array.isArray(d.eintraege) ? d.eintraege : [];
   d.eintraege.forEach(e => { e.fotos = Array.isArray(e.fotos) ? e.fotos : []; });
+  // 03.11.2026: eigene Berichtsfelder "Strecke" (Haupteintrag) und "Ort" (Sub)
+  const name = n => (n && !/\d+\.\d{2,}/.test(n) && !/°/.test(n) ? n : "");
+  d.eintraege.forEach(e => {
+    if (e.art === "thema" && e.strecke === undefined) e.strecke = [name(e.ort), name(e.ziel)].filter(Boolean).join(" – ");
+    if (e.art !== "thema" && e.ortText === undefined) e.ortText = name(e.ort);
+  });
   // 11.10.2026: Art des Eintrags ausdrücklich speichern ("thema" = Haupteintrag
   // ohne Fotos/Karte, "sub" = Sub-Thema mit Ort, Karte, Fotos und Nummer).
   // Ältere Einträge: erster Eintrag eines Tages ohne Fotos wird Haupteintrag.
@@ -1228,12 +1246,32 @@ async function speichere() {
 
 function reiseTitel() { return daten.reise.titel || "Reisetagebuch"; }
 function istThema(e) { return e && e.art === "thema"; }
-// Je Tag: Haupteintrag zuerst, dann die Sub-Themen in Erfassungsreihenfolge
-function eintraegeSortiert() {
-  return [...daten.eintraege].sort((a, b) => a.datum.localeCompare(b.datum)
-    || (istThema(b) - istThema(a)) || (a.erstellt || 0) - (b.erstellt || 0));
+// 03.11.2026: Ein Tag kann mehrere Haupteinträge haben (z.B. Anreise und
+// Detail). Jeder Haupteintrag bildet mit seinen Sub-Einträgen einen
+// "Abschnitt" mit eigener Route, Kartenansicht und Distanz. Sub-Einträge
+// gehören zum gewählten Haupteintrag (e.thema), sonst zum ersten des Tages.
+const nachErfassung = (a, b) => (a.erstellt || 0) - (b.erstellt || 0);
+function themenAm(datum) { return daten.eintraege.filter(e => e.datum === datum && istThema(e)).sort(nachErfassung); }
+function themaAm(datum) { return themenAm(datum)[0]; }
+function themaVon(sub) { const th = themenAm(sub.datum); return th.find(t => t.id === sub.thema) || th[0] || null; }
+function abschnitteAm(datum) {
+  const th = themenAm(datum);
+  const subs = daten.eintraege.filter(e => e.datum === datum && !istThema(e)).sort(nachErfassung);
+  if (!th.length) return [{ t: null, datum, subs }];
+  return th.map(t => ({ t, datum, subs: subs.filter(sb => themaVon(sb) === t) }));
 }
-function themaAm(datum) { return daten.eintraege.find(e => e.datum === datum && istThema(e)); }
+function abschnittVon(e) {
+  const t = istThema(e) ? e : themaVon(e);
+  return abschnitteAm(e.datum).find(a => a.t === t);
+}
+// Je Tag: Haupteintrag, seine Sub-Einträge, dann der nächste Haupteintrag …
+function eintraegeSortiert() {
+  const tage = [...new Set(daten.eintraege.map(e => e.datum))].sort();
+  return tage.flatMap(d => abschnitteAm(d).flatMap(a => [a.t, ...a.subs].filter(Boolean)));
+}
+// Texte für die Berichte (selbst geschrieben, getrennt von der Routenplanung)
+function streckeText(t) { return (t && t.strecke) || ""; }
+function ortAnzeige(e) { return (e && e.ortText) || ""; }
 // 12.10.2026: Nummer der Sub-Themen = Tag.Sub, z.B. 3.1, 3.2 (Tag 3) –
 // dieselbe Nummer steht im Tagebuch, auf der Karte, im PDF und in WhatsApp.
 function subNummern() {
@@ -1258,28 +1296,27 @@ function tagLabel(datum) { const n = tagNummer(datum); return n ? `Tag ${n}` : "
 // Route je Tag = Start des Haupteintrags → Orte der Sub-Themen (nummeriert)
 // → Reiseziel des Haupteintrags. Die Kilometer eines Tages werden aus diesen
 // Punkten verdichtet.
-function tagesPunkte(datum, nummern = subNummern()) {
-  const punkte = [];
-  const t = themaAm(datum);
+function abschnittPunkte(a, nummern = subNummern()) {
+  const punkte = [], t = a.t, datum = a.datum;
   if (t && Number.isFinite(t.lat) && Number.isFinite(t.lon)) {
     punkte.push({ lat: t.lat, lon: t.lon, datum, titel: `Start: ${t.ort || "Start"}`, ort: t.ort, start: true });
   }
-  for (const e of eintraegeAm(datum)) {
-    if (istThema(e)) continue;
-    if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: e.ort, fotos: e.fotos, nr: nummern.get(e.id) });
+  for (const e of a.subs) {
+    if (Number.isFinite(e.lat) && Number.isFinite(e.lon)) punkte.push({ lat: e.lat, lon: e.lon, datum, titel: e.titel, ort: ortAnzeige(e) || e.ort, fotos: e.fotos, nr: nummern.get(e.id) });
   }
-  const thema = themaAm(datum);
-  if (thema && Number.isFinite(thema.zielLat) && Number.isFinite(thema.zielLon)) {
-    punkte.push({ lat: thema.zielLat, lon: thema.zielLon, datum, titel: `🏁 ${thema.ziel || "Reiseziel"}`, ort: thema.ziel, ziel: true });
+  if (t && Number.isFinite(t.zielLat) && Number.isFinite(t.zielLon)) {
+    punkte.push({ lat: t.zielLat, lon: t.zielLon, datum, titel: `🏁 ${t.ziel || "Reiseziel"}`, ort: t.ziel, ziel: true });
   }
   return punkte;
 }
-function tagKm(datum) {
-  const rt = gueltigeRoute(themaAm(datum));
+function tagesPunkte(datum, nummern = subNummern()) { return abschnitteAm(datum).flatMap(a => abschnittPunkte(a, nummern)); }
+// Distanz eines Abschnitts: aus der Routenplanung, sonst Luftlinie
+function abschnittKm(a) {
+  const rt = gueltigeRoute(a.t);
   if (rt) return rt.km;
-  return streckeKm(tagesPunkte(datum).map(p => [p.lat, p.lon]));
+  return streckeKm(abschnittPunkte(a).map(p => [p.lat, p.lon]));
 }
-function tagesLinie(datum) { const rt = gueltigeRoute(themaAm(datum)); return rt ? rt.punkte : null; }
+function tagKm(datum) { return abschnitteAm(datum).reduce((sum, a) => sum + abschnittKm(a), 0); }
 // Sub-Route: Sub-Eintrag mit anderem Ziel oder Zwischenzielen
 function istSubRoute(e) {
   if (!e || istThema(e) || !Number.isFinite(e.lat) || !Number.isFinite(e.zielLat)) return false;
@@ -1290,19 +1327,26 @@ function subRouteKm(e) {
   const rt = gueltigeRoute(e);
   return rt ? rt.km : streckeKm(routenWegpunkte([e.lat, e.lon], e.vias, [e.zielLat, e.zielLon]));
 }
-function subRouteText(e) {   // "Start – Ziel · 12 km · zu Fuss"
+function subRouteText(e) {   // "12 km · zu Fuss" (Namen nur aus dem Feld "Ort")
   if (!istSubRoute(e)) return "";
   const rt = gueltigeRoute(e);
   const kmS = subRouteKm(e);
-  return [[e.ort, ...(e.vias || []).map(v => v.name), e.ziel].filter(Boolean).join(" – "),
-    `${formatZahlCH(kmS, kmS < 10 ? 1 : 0)} km`, MODUS_TEXT[(rt && rt.modus) || e.modus] || ""].filter(Boolean).join(" · ");
+  return [`${formatZahlCH(kmS, kmS < 10 ? 1 : 0)} km`, MODUS_TEXT[(rt && rt.modus) || e.modus] || ""].filter(Boolean).join(" · ");
 }
-// Alle Linien eines Tages für die Karten: Hauptroute + Sub-Routen
-function tagesLinien(datum) {
+// Zeile unter der Überschrift eines Sub-Eintrags: "Ort · 12 km · zu Fuss"
+function subZeile(e) { return [ortAnzeige(e), subRouteText(e)].filter(Boolean).join(" · "); }
+// Zeile unter der Überschrift eines Haupteintrags: "Strecke · 231 km"
+function streckeZeile(a) {
+  const kmA = abschnittKm(a);
+  return [streckeText(a.t), kmA >= 1 ? `${formatZahlCH(kmA)} km` : ""].filter(Boolean).join(" · ");
+}
+// Alle Linien eines Abschnitts / Tages: Hauptroute + Sub-Routen
+function tagesLinien(datum) { return abschnitteAm(datum).flatMap(abschnittLinien); }
+function abschnittLinien(a) {
   const out = [];
-  const t = themaAm(datum), rt = gueltigeRoute(t);
-  if (rt) out.push({ id: `h${datum}`, punkte: rt.punkte, modus: rt.modus, haupt: true });
-  for (const e of eintraegeAm(datum)) {
+  const t = a.t, rt = gueltigeRoute(t);
+  if (rt) out.push({ id: `h${t.id}`, punkte: rt.punkte, modus: rt.modus, haupt: true });
+  for (const e of a.subs) {
     if (!istSubRoute(e)) continue;
     const sr = gueltigeRoute(e);
     out.push({ id: `s${e.id}`, punkte: sr ? sr.punkte : routenWegpunkte([e.lat, e.lon], e.vias, [e.zielLat, e.zielLon]), modus: (sr && sr.modus) || e.modus, sub: true });
@@ -1316,18 +1360,8 @@ function linienStil(l) {
 function leafletStil(modus, sub) {
   return { color: sub ? "#5aa9bb" : "#d4a24e", opacity: 0.95, dashArray: modus === "schiff" ? "9 7" : null };
 }
-function tagStrecke(datum) {   // "Ersigen → Singapur" (Start bzw. erster Ort → Reiseziel)
-  const thema = themaAm(datum);
-  const start = (thema && thema.ort) || (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
-  const ziel = thema && thema.ziel;
-  if (ziel) return start ? `${start} → ${ziel}` : `→ ${ziel}`;
-  return start;
-}
-function tagStreckeSymbole(datum) {   // "📍 Ersigen → 🏁 Singapur"
-  const thema = themaAm(datum);
-  const start = (thema && thema.ort) || (eintraegeAm(datum).find(e => !istThema(e) && e.ort) || {}).ort || "";
-  const ziel = thema && thema.ziel;
-  return [start && `📍 ${start}`, ziel && `🏁 ${ziel}`].filter(Boolean).join(" → ");
+function tagStrecke(datum) {   // Strecke(n) des Tages aus den Berichtsfeldern
+  return themenAm(datum).map(streckeText).filter(Boolean).join(" / ");
 }
 function stationen() { const n = subNummern(); return tageMitEintraegen().flatMap(d => tagesPunkte(d, n)); }
 function anzahlReisetage() {
@@ -1511,8 +1545,8 @@ function renderTagebuch() {
       ek.append(h3, bearbeiten);
       block.appendChild(ek);
       const ortText = istThema(e)
-        ? tagStreckeSymbole(datum)
-        : (e.ort ? `📍 ${e.ort}${Number.isFinite(e.lat) ? "" : " · ohne Kartenpunkt"}` : "");
+        ? `${kartenArtVon(e) === "anreise" ? "✈️ " : "🛣️ "}${streckeZeile(abschnittVon(e)) || "Strecke noch nicht beschrieben"}`
+        : (subZeile(e) ? `📍 ${subZeile(e)}` : (Number.isFinite(e.lat) ? "" : "ohne Kartenpunkt"));
       if (ortText) {
         const ort = document.createElement("p");
         ort.className = "eintrag-ort";
@@ -1592,19 +1626,29 @@ function entwurfOffen() {
 }
 
 // ── Eintrag-Formular ─────────────────────────────────────────────────
-const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], kartenArt: "detail", zielAuto: true, neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
+const form = { id: null, art: "auto", fotos: [], titel: new Set(), texte: new Map(), route: null, routeModus: "auto", vias: [], kartenArt: "detail", zielAuto: true, thema: null, neu: new Set(), entfernt: new Set(), lat: null, lon: null, zLat: null, zLon: null };
 const feld = id => document.getElementById(id);
 
-// Art des Eintrags: Haupteintrag (nur Titel, Reiseziel, Text) oder Sub-Thema
-// (mit Ort, Karte und Fotos). Pro Tag gibt es höchstens einen Haupteintrag.
+// Art des Eintrags: Haupteintrag oder Sub-Eintrag. Seit 03.11.2026 sind
+// mehrere Haupteinträge pro Tag erlaubt.
 function anderesThemaAm(datum) {
   return daten.eintraege.find(e => e.datum === datum && istThema(e) && e.id !== form.id);
 }
 function aufgeloesteArt() {
   const datum = feld("eDatum").value;
-  if (form.art === "thema" && datum && anderesThemaAm(datum)) return "sub";
   if (form.art === "thema" || form.art === "sub") return form.art;
   return datum && anderesThemaAm(datum) ? "sub" : "thema";   // automatisch
+}
+// Auswahl, zu welchem Haupteintrag ein Sub-Eintrag gehört
+function renderThemaWahl() {
+  const datum = feld("eDatum").value;
+  const th = datum ? themenAm(datum).filter(t => t.id !== form.id) : [];
+  const sel = feld("eThema");
+  sel.innerHTML = "";
+  th.forEach(t => sel.add(new Option(`${t.titel || "Haupteintrag"}${t.kartenArt === "anreise" ? " (Anreise)" : ""}`, t.id)));
+  if (th.some(t => t.id === form.thema)) sel.value = form.thema;
+  else if (th.length) { sel.value = th[th.length - 1].id; form.thema = sel.value; }
+  feld("eThemaBlock").hidden = aufgeloesteArt() === "thema" || th.length < 2;
 }
 function istThemaImFormular() { return aufgeloesteArt() === "thema"; }
 function renderRolle() {
@@ -1613,21 +1657,24 @@ function renderRolle() {
   const vorhanden = datum && anderesThemaAm(datum);
   document.querySelectorAll("#eRolleWahl button").forEach(b => {
     b.classList.toggle("aktiv", b.dataset.art === art);
-    b.disabled = b.dataset.art === "thema" && !!vorhanden;
+    b.disabled = false;
   });
+  renderThemaWahl();
+  feld("eAnzeigeLabel").textContent = art === "thema" ? "Strecke (erscheint im Bericht)" : "Ort (erscheint im Bericht)";
+  feld("eAnzeige").placeholder = art === "thema" ? "z.B. Auckland – Rotorua" : "z.B. Hobbiton, Matamata";
   // 02.11.2026: Sub-Einträge haben ebenfalls Ziel und Zwischenziele (Sub-Route)
   feld("zielBlock").hidden = false;
   feld("kartenArtKopf").hidden = art !== "thema";
   feld("kartenArtInfo").hidden = art !== "thema";
-  feld("eZielLabel").textContent = art === "thema" ? "Reiseziel des Tages" : "Ziel (automatisch = Ort; anders = Sub-Route)";
+  feld("eZielLabel").textContent = art === "thema" ? "Ziel" : "Ziel (automatisch = Standort; anders = Sub-Route)";
   renderVias(); renderKartenArt(); renderModi(); setTimeout(planeRoute, 0);
   // Haupteintrag: Ort-Feld = Start des Tages, dazu das Reiseziel
-  feld("eOrtLabel").textContent = art === "thema" ? "Start des Tages" : "Ort / Start";
+  feld("eOrtLabel").textContent = art === "thema" ? "Start" : "Standort / Start";
   feld("eOrt").placeholder = art === "thema" ? "z.B. Ersigen" : "z.B. Kyoto";
   feld("fotoBlock").hidden = art === "thema";
   feld("eRolle").textContent = art === "thema"
-    ? "Haupteintrag des Tages: Titel, Start → Reiseziel und Text. Fotos kommen in die Sub-Themen."
-    : `Sub-Thema${vorhanden ? ` zu „${vorhanden.titel || "Haupteintrag"}“` : ""}: mit Ort, Karte und Fotos.`;
+    ? `Haupteintrag: Titel, Strecke und Text${vorhanden ? " (weiterer Haupteintrag an diesem Tag, z.B. Anreise und Detail)" : ""}. Fotos kommen in die Sub-Einträge.`
+    : "Sub-Eintrag: mit Ort, Karte und Fotos.";
 }
 document.querySelectorAll("#eRolleWahl button").forEach(b => b.addEventListener("click", () => {
   form.art = b.dataset.art;
@@ -1653,6 +1700,8 @@ function formularLeeren() {
   form.vias = [];
   form.kartenArt = "detail";
   form.zielAuto = true;
+  form.thema = null;
+  feld("eAnzeige").value = "";
   if (typeof schreibStatus === "function") {
     try { schreibStatus(""); feld("textVorschlag").hidden = true; feld("textZurueck").hidden = true; textVorher = null; } catch { /* beim Start */ }
   }
@@ -1694,6 +1743,8 @@ function bearbeiteEintrag(id) {
     form.routeModus = (e.route && e.route.modus) || "auto";
     form.vias = (e.vias || []).map(v => ({ ...v }));
     form.kartenArt = kartenArtVon(e);
+    form.thema = istThema(e) ? null : (themaVon(e) || {}).id || null;
+    feld("eAnzeige").value = istThema(e) ? (e.strecke || "") : (e.ortText || "");
     form.routeModus = (e.route && e.route.modus) || e.modus || (form.kartenArt === "anreise" ? "flug" : "auto");
     if (form.routeModus === "velo") form.routeModus = "auto";
     // Sub-Eintrag: Ziel folgt dem Ort, solange es nicht bewusst anders gesetzt ist
@@ -1781,6 +1832,7 @@ function renderFormFotos() {
 }
 
 feld("eDatum").addEventListener("change", renderRolle);
+feld("eThema").addEventListener("change", ev => { form.thema = ev.target.value; });
 feld("fotoInput").addEventListener("change", async (ev) => {
   const dateien = [...ev.target.files];
   ev.target.value = "";
@@ -1889,6 +1941,7 @@ function dauerText(min) {
 // 02.11.2026: nur noch Anreise oder Detail (frühere "Standard"-Tage = Detail)
 function kartenArtVon(t) { return t && t.kartenArt === "anreise" ? "anreise" : "detail"; }
 function kartenArtAm(datum) { return kartenArtVon(themaAm(datum)); }
+function abschnittHatRoute(a) { return !!gueltigeRoute(a.t); }
 // Gilt die gespeicherte Route noch zu den aktuellen Punkten des Tages?
 function gueltigeRoute(thema) {
   if (!thema || !thema.route || !thema.route.punkte) return null;
@@ -2306,11 +2359,6 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
   meldung.className = "formular-meldung";
   if (!datum) { meldung.textContent = "Bitte ein Datum wählen."; meldung.hidden = false; return; }
   const thema = istThemaImFormular();
-  if (thema && form.art === "thema" && anderesThemaAm(datum)) {
-    meldung.textContent = "Für diesen Tag gibt es schon einen Haupteintrag. Als Sub-Thema speichern.";
-    meldung.hidden = false;
-    return;
-  }
   if (thema && form.fotos.length) {
     meldung.textContent = "Ein Haupteintrag hat keine Fotos. Fotos entfernen oder als Sub-Thema speichern.";
     meldung.hidden = false;
@@ -2332,6 +2380,9 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     route: form.route || null,
     modus: form.routeModus,
     kartenArt: thema ? form.kartenArt : "",
+    strecke: thema ? feld("eAnzeige").value.trim() : undefined,
+    ortText: thema ? undefined : feld("eAnzeige").value.trim(),
+    thema: thema ? undefined : (themenAm(datum).some(t => t.id === form.thema) ? form.thema : ((themenAm(datum).slice(-1)[0] || {}).id || null)),
     vias: form.vias.filter(v => Number.isFinite(v.lat)).map(v => ({ name: (v.name || "").trim(), lat: v.lat, lon: v.lon })),
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
@@ -2466,16 +2517,18 @@ function zeichneKarte() {
   const st = stationen();
   // Luftlinie nur für Tage ohne Routenplanung
   for (const datum of tageMitEintraegen()) {
-    if (tagesLinie(datum)) continue;
-    const pk = tagesPunkte(datum);
+    for (const a of abschnitteAm(datum)) {
+    if (abschnittHatRoute(a)) continue;
+    const pk = abschnittPunkte(a);
     if (pk.length > 1) L.polyline(pk.map(e => [e.lat, e.lon]), { color: "#d4a24e", weight: 2.5, dashArray: "6 7", opacity: 0.7 }).addTo(karteEbene);
+    }
   }
   // 27.10.2026: geplante Strecken der Tage (Strasse/Weg) durchgezogen
   for (const datum of tageMitEintraegen()) {
     for (const l of tagesLinien(datum)) {
       const sub = l.sub ? eintraegeAm(datum).find(e => `s${e.id}` === l.id) : null;
       L.polyline(l.punkte, { ...leafletStil(l.modus, !!l.sub), weight: l.sub ? 3 : 4 })
-        .bindPopup(sub ? `${subNummern().get(sub.id)} ${sub.titel || ""}: ${subRouteText(sub)}` : `${tagLabel(datum)}: ${tagStrecke(datum)} · ${formatZahlCH(tagKm(datum))} km`)
+        .bindPopup(sub ? `${subNummern().get(sub.id)} ${sub.titel || ""}: ${subZeile(sub)}` : (() => { const a = abschnitteAm(datum).find(x => x.t && `h${x.t.id}` === l.id); return `${tagLabel(datum)}: ${a ? `${a.t.titel || ""} · ${streckeZeile(a)}` : ""}`; })())
         .addTo(karteEbene);
       grenzen.push(...l.punkte);
     }
@@ -2663,7 +2716,7 @@ async function statischeKarte(opt = {}) {
     // Luftlinie (gestrichelt) nur, wo keine geplante Route vorhanden ist
     const gestrichelt = opt.punkte
       ? (opt.ohneLuftlinie || tracks.some(t => t.haupt) ? [] : [st])
-      : tageMitEintraegen().filter(d => !tagesLinie(d)).map(d => tagesPunkte(d));
+      : tageMitEintraegen().flatMap(d => abschnitteAm(d)).filter(a => !abschnittHatRoute(a)).map(a => abschnittPunkte(a));
     for (const seg of gestrichelt) {
       if (seg.length < 2) continue;
       g.strokeStyle = "#b57d1e"; g.lineWidth = 4; g.setLineDash([12, 12]); g.beginPath();
@@ -2739,9 +2792,10 @@ function landBoxAusGeojson(geo) {
   }
   return [[Math.min(...boxen.map(b => b.s)), w], [Math.max(...boxen.map(b => b.n)), e]];
 }
-async function landFuerTag(datum) {
-  const t = themaAm(datum);
-  const p = tagesPunkte(datum)[0];
+async function landFuerTag(datum) { return landFuer(abschnitteAm(datum)[0]); }
+async function landFuer(ab) {
+  const t = ab.t;
+  const p = abschnittPunkte(ab)[0];
   if (!p) return null;
   daten.laender = daten.laender || {};
   if (t && t.land && daten.laender[t.land]) return daten.laender[t.land];
@@ -2771,9 +2825,11 @@ function bildLaden(url) {
 }
 // Detailkarte (maximal skaliert) + Land klein in der freiesten Ecke
 const WELT = { name: "Welt", box: [[-56, -170], [72, 190]] };
-async function tagesDetailKarte(datum, B, H, nummern, art = kartenArtAm(datum)) {
-  const pkt = tagesPunkte(datum, nummern);
-  const linien = tagesLinien(datum);
+async function tagesDetailKarte(datum, B, H, nummern) { return abschnittKarte(abschnitteAm(datum)[0], B, H, nummern); }
+async function abschnittKarte(a, B, H, nummern) {
+  const art = kartenArtVon(a.t);
+  const pkt = abschnittPunkte(a, nummern);
+  const linien = abschnittLinien(a);
   if (!pkt.length && !linien.length) return null;
   // 02.11.2026: Anreise = ganze Weltkarte (noch kein bestimmtes Land)
   if (art === "anreise") {
@@ -2782,7 +2838,7 @@ async function tagesDetailKarte(datum, B, H, nummern, art = kartenArtAm(datum)) 
   const detail = await statischeKarte({ punkte: pkt, linien, B, H, rand: Math.round(Math.min(B, H) * 0.11), max: true });
   if (!detail) return null;
   let land = null;
-  try { land = await landFuerTag(datum); } catch { land = null; }
+  try { land = await landFuer(a); } catch { land = null; }
   if (!land) return detail;
   const alle = [...pkt.map(q => [q.lat, q.lon]), ...linien.flatMap(l => l.punkte)];
   const lat = alle.map(q => q[0]), lon = alle.map(q => q[1]);
@@ -3103,33 +3159,33 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     // 02.11.2026: Bereiste Länder, je eine Karte mit dem Streckenverlauf im Land
     fortschritt && fortschritt("Länderkarten …");
     const laender = new Map();
-    for (const datum of tageMitEintraegen()) {
-      if (kartenArtAm(datum) === "anreise") continue;
+    for (const a of tageMitEintraegen().flatMap(d => abschnitteAm(d))) {
+      if (kartenArtVon(a.t) === "anreise") continue;
       let land = null;
-      try { land = await landFuerTag(datum); } catch { land = null; }
+      try { land = await landFuer(a); } catch { land = null; }
       if (!land) continue;
       const code = Object.keys(daten.laender || {}).find(c => daten.laender[c] === land) || land.name;
       if (!laender.has(code)) laender.set(code, { land, tage: [] });
-      laender.get(code).tage.push(datum);
+      laender.get(code).tage.push(a);
     }
     if (laender.size) {
       let erstes = true;
       for (const { land, tage: lt } of laender.values()) {
-        const linien = lt.flatMap(d => tagesLinien(d));
-        // Übersicht: je Tag Route + Rahmen mit "Tag N" in der Mitte, ohne Einzelpunkte
-        const rahmen = lt.map(d => {
-          const ps = [...tagesPunkte(d, nummern).map(q => [q.lat, q.lon]), ...tagesLinien(d).flatMap(l => l.punkte)];
+        const linien = lt.flatMap(a => abschnittLinien(a));
+        // Übersicht: je Abschnitt Route + Rahmen mit "Tag N" in der Mitte, ohne Einzelpunkte
+        const rahmen = lt.map(a => {
+          const ps = [...abschnittPunkte(a, nummern).map(q => [q.lat, q.lon]), ...abschnittLinien(a).flatMap(l => l.punkte)];
           if (!ps.length) return null;
           const la = ps.map(q => q[0]), lo = ps.map(q => q[1]);
-          return { label: tagNummer(d) ? `Tag ${tagNummer(d)}` : tagLabel(d), box: [[Math.min(...la), Math.min(...lo)], [Math.max(...la), Math.max(...lo)]] };
+          return { label: tagNummer(a.datum) ? `Tag ${tagNummer(a.datum)}` : tagLabel(a.datum), box: [[Math.min(...la), Math.min(...lo)], [Math.max(...la), Math.max(...lo)]] };
         }).filter(Boolean);
         const punkte = [];
         const merc = la => Math.log(Math.tan(Math.PI / 4 + la * Math.PI / 360));
         const [[s0, w0], [n0, e0]] = land.box;
         const verh = Math.max(0.5, Math.min(1.6, (merc(n0) - merc(s0)) / ((e0 - w0) * Math.PI / 180)));
         const lk = await statischeKarte({ punkte, linien, rahmen, extra: [...land.box, ...rahmen.flatMap(x => x.box)], B: 1400, H: Math.round(1400 * verh), rand: 40, max: true, ohneLuftlinie: true });
-        const kmL = lt.reduce((sum, d) => sum + tagKm(d), 0);
-        const nr = lt.map(tagNummer).filter(Boolean);
+        const kmL = lt.reduce((sum, a) => sum + abschnittKm(a), 0);
+        const nr = [...new Set(lt.map(a => tagNummer(a.datum)).filter(Boolean))];
         // Hohe Länder (z.B. Neuseeland, Chile) schmaler darstellen, max. 150 mm hoch
         const kh = lk ? Math.min(150, B * lk.h / lk.w) : 0;
         const kb = lk ? kh * lk.w / lk.h : 0;
@@ -3139,7 +3195,8 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         schrift("bold", 12, D.tinte);
         doc.text(pdfText(land.name), R, y + 4);
         schrift("normal", 8.5, D.grau);
-        doc.text(pdfText(`${lt.length} Tag${lt.length === 1 ? "" : "e"}${nr.length ? ` (Tag ${nr[0]}${nr.length > 1 ? `–${nr[nr.length - 1]}` : ""})` : ""}  ·  ${formatZahlCH(kmL)} km`), R + B, y + 4, { align: "right" });
+        const nTage = new Set(lt.map(a => a.datum)).size;
+        doc.text(pdfText(`${nTage} Tag${nTage === 1 ? "" : "e"}${nr.length ? ` (Tag ${nr[0]}${nr.length > 1 ? `–${nr[nr.length - 1]}` : ""})` : ""}  ·  ${formatZahlCH(kmL)} km`), R + B, y + 4, { align: "right" });
         y += 7;
         if (lk) {
           const kx = R + (B - kb) / 2;
@@ -3152,9 +3209,8 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     platz(24);
     abschnitt("REISEVERLAUF");
     y += 2;
-    for (const datum of tageMitEintraegen()) {
-      const t = themaAm(datum);
-      const subs = eintraegeAm(datum).filter(e => !istThema(e));
+    for (const ab of tageMitEintraegen().flatMap(d => abschnitteAm(d))) {
+      const datum = ab.datum, t = ab.t;
       platz(12);
       doc.setDrawColor(...D.linie); doc.setLineWidth(0.2); doc.line(R, y - 4.2, R + B, y - 4.2);
       schrift("bold", 10, D.gold);
@@ -3164,10 +3220,10 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       schrift("normal", 8.5, D.grau);
       doc.text(pdfText(datumLang(datum)), R + B, y, { align: "right" });
       y += 4.6;
-      const kmT = tagKm(datum);
-      const wegT = t ? [t.ort, ...(t.vias || []).map(v => v.name), t.ziel].filter(Boolean).join(" – ") : tagStrecke(datum).replace("→", "–");
+      const kmT = abschnittKm(ab);
+      const wegT = streckeText(t);
       const rtT = gueltigeRoute(t);
-      const artT = kartenArtAm(datum) === "anreise" ? "Anreise" : "";
+      const artT = t && kartenArtVon(t) === "anreise" ? "Anreise" : "";
       if (wegT || kmT >= 1) {
         schrift("normal", 8.5, D.grau);
         const zeile = [artT, wegT, kmT >= 1 ? `${formatZahlCH(kmT)} km` : "", rtT ? MODUS_TEXT[rtT.modus] : ""].filter(Boolean).join("  ·  ");
@@ -3179,14 +3235,17 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
   }
 
   // ── Tage ──────────────────────────────────────────────────────────
-  for (let ti = 0; ti < tage.length; ti++) {
-    const datum = tage[ti];
-    fortschritt && fortschritt(`Tag ${ti + 1} von ${tage.length} …`);
+  // 03.11.2026: je Haupteintrag (Abschnitt) ein Kapitel -- ein Tag kann mehrere haben
+  const kapitel = tage.flatMap(d => abschnitteAm(d));
+  for (let ti = 0; ti < kapitel.length; ti++) {
+    const ab = kapitel[ti];
+    const datum = ab.datum;
+    fortschritt && fortschritt(`Kapitel ${ti + 1} von ${kapitel.length} …`);
     if (!leer) neueSeite();
     leer = false;
-    const thema = themaAm(datum);
-    const subs = eintraegeAm(datum).filter(e => !istThema(e));
-    const kmTag = tagKm(datum);
+    const thema = ab.t;
+    const subs = ab.subs;
+    const kmTag = abschnittKm(ab);
 
     // Tageskopf: grosse Tagnummer, Datum, Thema, Route
     doc.setFillColor(...D.goldHell); doc.rect(R, y, 14, 1.4, "F");
@@ -3201,19 +3260,17 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     const thZ = doc.splitTextToSize(pdfText((thema && thema.titel) || tagLabel(datum)), B - 24);
     doc.text(thZ, R + 24, y + 8.5);
     let ky = y + 8.5 + (thZ.length - 1) * 7.8;
-    const strecke = tagStrecke(datum);
-    if (strecke || kmTag >= 1) {
+    const strecke = streckeZeile(ab);
+    if (strecke) {
       schrift("bold", 10, D.gold);
-      doc.text(pdfText(`${strecke.replace("→", "–")}${kmTag >= 1 ? `   ·   ${formatZahlCH(kmTag)} km` : ""}`), R + 24, ky + 7.5);
+      doc.text(doc.splitTextToSize(pdfText(strecke.replace(" · ", "   ·   ")), B - 24)[0], R + 24, ky + 7.5);
       ky += 7.5;
     }
     y = Math.max(ky + 7, y + 18);
     // Tageskarte über die ganze Breite: Streckenabschnitt des Tages
-    const pkt = tagesPunkte(datum, nummern);
+    const pkt = abschnittPunkte(ab, nummern);
     if (pkt.length) {
-      const tk = kartenArtAm(datum) !== "normal"
-        ? await tagesDetailKarte(datum, 1400, 760, nummern)
-        : await statischeKarte({ punkte: pkt, B: 1400, H: 560, rand: 70, linien: tagesLinien(datum) });
+      const tk = await abschnittKarte(ab, 1400, 760, nummern);
       if (tk) {
         const th = B * tk.h / tk.w;
         doc.addImage(tk.url, "JPEG", R, y, B, th);
@@ -3222,24 +3279,23 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       }
     }
     // 01.11.2026: Zusammenfassung bei Anreise und Detailansicht
-    const kArt = kartenArtAm(datum);
-    if (thema && kArt !== "normal") {
+    const kArt = kartenArtVon(thema);
+    if (thema) {
       const rt = gueltigeRoute(thema);
-      const wege = [thema.ort, ...(thema.vias || []).map(v => v.name), thema.ziel].filter(Boolean);
       schrift("bold", 7.5, D.gold);
       doc.setCharSpace(1.2); doc.text(kArt === "anreise" ? "ZUSAMMENFASSUNG ANREISE" : "ZUSAMMENFASSUNG TAGESROUTE", R, y + 3); doc.setCharSpace(0);
       y += 4.5;
       doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.line(R, y, R + B, y);
       y += 5;
-      schrift("bold", 8, D.grau); doc.text(kArt === "anreise" ? "Reiseweg" : "Tagesroute", R, y);
+      schrift("bold", 8, D.grau); doc.text(kArt === "anreise" ? "Reiseweg" : "Strecke", R, y);
       schrift("bold", 10, D.tinte);
-      const wegZ = doc.splitTextToSize(pdfText(wege.join("  –  ") || tagStrecke(datum).replace("→", "–")), B - 26);
+      const wegZ = doc.splitTextToSize(pdfText(streckeText(thema) || "–"), B - 26);
       doc.text(wegZ, R + 26, y);
       y += (wegZ.length - 1) * 4.6 + 4.8;
       schrift("normal", 9, D.grau);
       const modusText = rt ? `${MODUS_TEXT[rt.modus] || ""}${rt.modus === "flug" || rt.modus === "schiff" ? " (Luftlinie)" : ""}` : "Luftlinie";
       const dauer = rt && rt.min ? `   ·   ca. ${dauerText(rt.min)}` : "";
-      doc.text(pdfText(`${formatZahlCH(kmTag, kmTag < 10 ? 1 : 0)} km   ·   ${modusText}${dauer}${(thema.vias || []).length ? `   ·   ${thema.vias.length} Zwischen${kArt === "anreise" ? "stopp" : "ziel"}${thema.vias.length === 1 ? "" : "e"}` : ""}`), R + 26, y);
+      doc.text(pdfText(`${formatZahlCH(kmTag, kmTag < 10 ? 1 : 0)} km   ·   ${modusText}${dauer}`), R + 26, y);
       y += 6.5;
       schrift("bold", 8, D.grau); doc.text("Stationen", R, y);
       if (!subs.length) { schrift("normal", 9, D.grau); doc.text("keine", R + 26, y); y += 5; }
@@ -3247,7 +3303,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         platz(5);
         const pw = pille(nummern.get(e.id), R + 26, y, false);
         schrift("normal", 9, D.tinte);
-        doc.text(doc.splitTextToSize(pdfText(`${e.titel || e.ort || "Sub-Thema"}${istSubRoute(e) ? `  (${subRouteText(e)})` : e.ort && e.titel ? `  (${e.ort})` : ""}`), B - 30 - pw)[0], R + 28 + pw, y);
+        doc.text(doc.splitTextToSize(pdfText(`${e.titel || ortAnzeige(e) || "Sub-Eintrag"}${subZeile(e) ? `  (${subZeile(e)})` : ""}`), B - 30 - pw)[0], R + 28 + pw, y);
         y += 5;
       }
       y += 4;
@@ -3280,22 +3336,18 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       }
       schrift("normal", 10.5);
       const textZ = e.text ? pdfText(e.text).split("\n").flatMap(a => a ? doc.splitTextToSize(a, B) : [""]) : [];
-      const kopfH = 26 + (e.ort && e.titel ? 5 : 0) + textZ.length * 5.2 + (zeilen[0] ? zeilen[0].h + 4 : 0);
+      const kopfH = 26 + (subZeile(e) ? 5 : 0) + textZ.length * 5.2 + (zeilen[0] ? zeilen[0].h + 4 : 0);
       if (y + kopfH > UNTEN && kopfH < UNTEN - R) neueSeite(); else y += 5;
       if (y > R) { doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.line(R, y, R + B, y); }
       y += 8;
       const pw = pille(nr, R, y);
       schrift("bold", 13, D.tinte);
-      const stZ = doc.splitTextToSize(pdfText(e.titel || e.ort || "Sub-Thema"), B - pw - 4);
+      const stZ = doc.splitTextToSize(pdfText(e.titel || ortAnzeige(e) || "Sub-Eintrag"), B - pw - 4);
       doc.text(stZ, R + pw + 3, y);
       y += (stZ.length - 1) * 5.6;
-      if (istSubRoute(e)) {
-        schrift("bold", 8.5, D.gold);
-        doc.text(doc.splitTextToSize(pdfText(subRouteText(e)), B - pw - 4)[0], R + pw + 3, y + 4.6);
-        y += 4.6;
-      } else if (e.ort && e.titel) {
-        schrift("normal", 8.5, D.grau);
-        doc.text(pdfText(e.ort), R + pw + 3, y + 4.6);
+      if (subZeile(e)) {
+        schrift(istSubRoute(e) ? "bold" : "normal", 8.5, istSubRoute(e) ? D.gold : D.grau);
+        doc.text(doc.splitTextToSize(pdfText(subZeile(e)), B - pw - 4)[0], R + pw + 3, y + 4.6);
         y += 4.6;
       }
       y += 4;
@@ -3387,18 +3439,16 @@ function eintragWhatsapp(e, istThema, mitReisetitel) {
   const z = [];
   if (mitReisetitel) z.push(`📖 *${reiseTitel()}*`, "");
   if (istThema) {
-    const kmTag = tagKm(e.datum);
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);
-    const strecke = tagStrecke(e.datum);
-    if (strecke) z.push(`${tagStreckeSymbole(e.datum)}${kmTag >= 1 ? ` · ${formatZahlCH(kmTag)} km` : ""}`);
-    else if (kmTag >= 1) z.push(`${formatZahlCH(kmTag)} km`);
+    const zeile = streckeZeile(abschnittVon(e));
+    if (zeile) z.push(`${kartenArtVon(e) === "anreise" ? "✈️" : "🛣️"} ${zeile}`);
   } else if (!themaAm(e.datum) && eintraegeAm(e.datum)[0].id === e.id) {
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);   // Tag ohne Haupteintrag
   }
   if (istThema) { if (e.titel) z.push(`*${e.titel}*`); }
   else {
-    z.push(`▸ *${subNummern().get(e.id)} · ${e.titel || e.ort || "Sub-Thema"}*`);
-    if (e.ort && e.titel) z.push(`📍 ${e.ort}`);
+    z.push(`▸ *${subNummern().get(e.id)} · ${e.titel || ortAnzeige(e) || "Sub-Eintrag"}*`);
+    if (subZeile(e)) z.push(`📍 ${subZeile(e)}`);
   }
   if (e.text) z.push(e.text);
   return z.join("\n").trim();
@@ -3517,11 +3567,11 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   mess.font = `700 34px ${PK.sans}`;
   const pillB = Math.max(68, mess.measureText(String(nr)).width + 36);
   mess.font = `600 52px ${PK.sans}`;
-  const titelZ = umbrechen(mess, e.titel || e.ort || "Sub-Thema", W - pillB - 24);
+  const titelZ = umbrechen(mess, e.titel || ortAnzeige(e) || "Sub-Eintrag", W - pillB - 24);
   mess.font = `34px ${PK.serif}`;
   const textZ = folge ? [] : umbrechen(mess, e.text, W);
-  const zeigeOrt = !folge && (e.ort || istSubRoute(e));
-  const ortText = istSubRoute(e) ? `${MODUS_SYMBOL[(gueltigeRoute(e) || {}).modus || e.modus] || "📍"} ${subRouteText(e)}` : `📍 ${e.ort}`;
+  const zeigeOrt = !folge && !!subZeile(e);
+  const ortText = `${istSubRoute(e) ? MODUS_SYMBOL[(gueltigeRoute(e) || {}).modus || e.modus] || "📍" : "📍"} ${subZeile(e)}`;
   const fotos = e.fotos.slice(teil * FOTOS_PRO_KARTE, (teil + 1) * FOTOS_PRO_KARTE);
   const paare = (await Promise.all(fotos.map(async id => [id, await ladeFotoBild(id)]))).filter(p => p[1]);
   const bilder = paare.map(p => p[1]);
@@ -3572,24 +3622,24 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   return c;   // ohne Fusszeile (12.10.2026)
 }
 
-async function erstelleTitelkarte(datum) {
+async function erstelleTitelkarte(datumOderAbschnitt) {
+  const ab = typeof datumOderAbschnitt === "string" ? abschnitteAm(datumOderAbschnitt)[0] : datumOderAbschnitt;
+  const datum = ab.datum;
   const { B, R } = PK, W = B - 2 * R;
-  const t = themaAm(datum);
-  const subs = eintraegeAm(datum).filter(e => !istThema(e));
-  const nFotos = subs.reduce((s, e) => s + e.fotos.length, 0);
-  const kmTag = tagKm(datum);
-  const strecke = tagStrecke(datum);
+  const t = ab.t;
+  const kmTag = abschnittKm(ab);
+  const strecke = streckeText(t);
   // 12.10.2026: kleiner Kartenausschnitt mit der Tagesroute oben rechts
   const KW = 380, KH = 285, KX = B - R - KW, KY = R + 14;
   let karte = null, gross = null;
   const GH = Math.round(W * 0.66);   // Option Detailansicht: Karte über die ganze Breite
   try {
-    const punkte = tagesPunkte(datum);
-    if (punkte.length && kartenArtAm(datum) !== "normal") {
-      const k = await tagesDetailKarte(datum, W, GH);
+    const punkte = abschnittPunkte(ab);
+    if (punkte.length && t) {
+      const k = await abschnittKarte(ab, W, GH);
       if (k) gross = await bildLaden(k.url);
     } else if (punkte.length) {
-      const k = await statischeKarte({ punkte, B: 480, H: 360, rand: 46, linien: tagesLinien(datum) });
+      const k = await statischeKarte({ punkte, B: 480, H: 360, rand: 46, linien: abschnittLinien(ab) });
       if (k) karte = await bildLaden(k.url);
     }
   } catch { karte = null; gross = null; }
@@ -3626,7 +3676,7 @@ async function erstelleTitelkarte(datum) {
   g.fillStyle = PK.hell; g.font = `700 64px ${PK.sans}`;
   titelZ.forEach(z => { g.fillText(z, R, y + 54); y += 76; });
   if (strecke || kmTag >= 1) {
-    const zeile = `${tagStreckeSymbole(datum)}${kmTag >= 1 ? `  ·  ${formatZahlCH(kmTag)} km` : ""}`;
+    const zeile = `${kartenArtVon(t) === "anreise" ? "✈️ " : "🛣️ "}${[strecke, kmTag >= 1 ? `${formatZahlCH(kmTag)} km` : ""].filter(Boolean).join("  ·  ")}`;
     const frei = y + 44 < KY + KH + 10 ? textB : W;   // neben der Karte schmaler
     let gr = 34;
     g.font = `600 ${gr}px ${PK.sans}`;
@@ -3634,13 +3684,6 @@ async function erstelleTitelkarte(datum) {
     g.fillStyle = PK.gold;
     g.fillText(zeile, R, y + 44);
     y += 64;
-    const vias = (t && t.vias || []).map(v => v.name).filter(Boolean);
-    if (vias.length && kartenArtAm(datum) !== "normal") {
-      g.fillStyle = "#8b93a3"; g.font = `500 28px ${PK.sans}`;
-      const ueber = umbrechen(g, `über ${vias.join(" · ")}`, W);
-      ueber.forEach(z => { g.fillText(z, R, y + 30); y += 40; });
-      y += 6;
-    }
   }
   y = karte ? Math.max(y + 30, KY + KH + 34) : y + 30;
   if (gross) {
@@ -3687,11 +3730,12 @@ async function oeffneDialogTage(tage) {
   const karten = [];
   const nummern = subNummern();
   try {
-    for (const datum of tage) {
+    for (const ab of tage.flatMap(d => abschnitteAm(d))) {
+      const datum = ab.datum;
       const tagNr = String(tagNummer(datum) || 0).padStart(2, "0");
-      const titel = await erstelleTitelkarte(datum);
-      karten.push(await canvasZuDatei(titel, `tag${tagNr}-0-tagesziel.jpg`));
-      const subs = eintraegeAm(datum).filter(e => !istThema(e));
+      const titel = await erstelleTitelkarte(ab);
+      karten.push(await canvasZuDatei(titel, `tag${tagNr}-0-${ab.t ? ab.t.id : "tag"}.jpg`));
+      const subs = ab.subs;
       for (let i = 0; i < subs.length; i++) {
         dialogStatus(`Postkarte ${i + 1} von ${subs.length} (${tagLabel(datum)}) …`);
         for (let teil = 0; teil < postkartenTeile(subs[i]); teil++) {
@@ -3867,7 +3911,7 @@ feld("textVerbessern").addEventListener("click", async () => {
   schreibStatus("✨ Text wird geprüft und überarbeitet …");
   try {
     const art = aufgeloesteArt() === "thema" ? "Haupteintrag des Tages" : "Sub-Eintrag";
-    const kontext = `Eintrag: ${art}, ${datumLang(feld("eDatum").value)}${feld("eOrt").value && !istKoordinate(feld("eOrt").value) ? `, Ort: ${feld("eOrt").value}` : ""}. Reise: ${reiseTitel()}.`;
+    const kontext = `Eintrag: ${art}, ${datumLang(feld("eDatum").value)}${feld("eAnzeige").value ? `, ${aufgeloesteArt() === "thema" ? "Strecke" : "Ort"}: ${feld("eAnzeige").value}` : ""}. Reise: ${reiseTitel()}.`;
     vorschlag = await claudeUeberarbeiten(titel, text, kontext);
     feld("vorschlagTitel").textContent = vorschlag.titel;
     feld("vorschlagText").textContent = vorschlag.text;
