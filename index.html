@@ -912,8 +912,9 @@
       <label><span id="eAnzeigeLabel">Strecke (erscheint im Bericht)</span>
         <input type="text" id="eAnzeige" maxlength="100" placeholder="z.B. Auckland – Rotorua" autocomplete="off" lang="de-CH" spellcheck="true" autocorrect="on">
       </label>
-      <label id="eThemaBlock" hidden>Gehört zum Haupteintrag
+      <label id="eThemaBlock" hidden>Einreihen (Reihenfolge im Tag)
         <span class="auswahl-huelle"><select id="eThema"></select></span>
+        <small class="hinweis" id="eReiheInfo"></small>
       </label>
       <p class="routen-titel">Routenplanung <small>(nur in der App, für Karte und Distanz)</small></p>
       <div id="ortBlock" style="display:flex;flex-direction:column;gap:12px">
@@ -1108,7 +1109,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "03.11.2026 · 22:00";
+const APP_VERSION = "03.11.2026 · 22:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1207,6 +1208,19 @@ function normalisiere(roh) {
   d.eintraege.forEach(e => { e.fotos = Array.isArray(e.fotos) ? e.fotos : []; });
   // 03.11.2026: eigene Berichtsfelder "Strecke" (Haupteintrag) und "Ort" (Sub)
   const name = n => (n && !/\d+\.\d{2,}/.test(n) && !/°/.test(n) ? n : "");
+  // 03.11.2026: Reihenfolge im Tag festhalten (bisherige Gliederung bleibt)
+  if (d.eintraege.some(e => !Number.isFinite(e.pos))) {
+    const tage = [...new Set(d.eintraege.map(e => e.datum))];
+    for (const tag of tage) {
+      const am = d.eintraege.filter(e => e.datum === tag);
+      const th = am.filter(e => e.art === "thema").sort((a, b) => (a.erstellt || 0) - (b.erstellt || 0));
+      const subs = am.filter(e => e.art !== "thema").sort((a, b) => (a.erstellt || 0) - (b.erstellt || 0));
+      const folge = th.length
+        ? th.flatMap((t, i) => [t, ...subs.filter(sb => (th.find(x => x.id === sb.thema) || th[0]) === t)])
+        : subs;
+      folge.forEach((e, i) => { if (!Number.isFinite(e.pos)) e.pos = (i + 1) * 10; });
+    }
+  }
   d.eintraege.forEach(e => {
     if (e.art === "thema" && e.strecke === undefined) e.strecke = [name(e.ort), name(e.ziel)].filter(Boolean).join(" – ");
     if (e.art !== "thema" && e.ortText === undefined) e.ortText = name(e.ort);
@@ -1251,14 +1265,26 @@ function istThema(e) { return e && e.art === "thema"; }
 // "Abschnitt" mit eigener Route, Kartenansicht und Distanz. Sub-Einträge
 // gehören zum gewählten Haupteintrag (e.thema), sonst zum ersten des Tages.
 const nachErfassung = (a, b) => (a.erstellt || 0) - (b.erstellt || 0);
-function themenAm(datum) { return daten.eintraege.filter(e => e.datum === datum && istThema(e)).sort(nachErfassung); }
+function themenAm(datum) { return eintraegeTag(datum).filter(istThema); }
 function themaAm(datum) { return themenAm(datum)[0]; }
-function themaVon(sub) { const th = themenAm(sub.datum); return th.find(t => t.id === sub.thema) || th[0] || null; }
+// 03.11.2026: Reihenfolge im Tag (e.pos). Ein Sub-Eintrag gehört zum
+// Haupteintrag, der vor ihm steht; Sub-Einträge vor dem ersten Haupteintrag
+// gehören zu diesem. So lässt sich ein Haupteintrag nachträglich zwischen
+// Sub-Einträge einreihen.
+const posVon = e => (Number.isFinite(e.pos) ? e.pos : (e.erstellt || 0));
+function eintraegeTag(datum) { return daten.eintraege.filter(e => e.datum === datum).sort((a, b) => posVon(a) - posVon(b) || nachErfassung(a, b)); }
+function themaVon(sub) { const ab = abschnitteAm(sub.datum).find(a => a.subs.includes(sub)); return ab ? ab.t : null; }
 function abschnitteAm(datum) {
-  const th = themenAm(datum);
-  const subs = daten.eintraege.filter(e => e.datum === datum && !istThema(e)).sort(nachErfassung);
-  if (!th.length) return [{ t: null, datum, subs }];
-  return th.map(t => ({ t, datum, subs: subs.filter(sb => themaVon(sb) === t) }));
+  const liste = eintraegeTag(datum);
+  const th = liste.filter(istThema);
+  if (!th.length) return [{ t: null, datum, subs: liste }];
+  const gruppen = th.map(t => ({ t, datum, subs: [] }));
+  let aktuell = gruppen[0];
+  for (const e of liste) {
+    if (istThema(e)) aktuell = gruppen.find(g => g.t === e);
+    else aktuell.subs.push(e);
+  }
+  return gruppen;
 }
 function abschnittVon(e) {
   const t = istThema(e) ? e : themaVon(e);
@@ -1640,15 +1666,37 @@ function aufgeloesteArt() {
   return datum && anderesThemaAm(datum) ? "sub" : "thema";   // automatisch
 }
 // Auswahl, zu welchem Haupteintrag ein Sub-Eintrag gehört
+// Position im Tag: "vor <Eintrag>" oder "am Ende". Sub-Einträge gehören zum
+// Haupteintrag, der vor ihnen steht.
 function renderThemaWahl() {
   const datum = feld("eDatum").value;
-  const th = datum ? themenAm(datum).filter(t => t.id !== form.id) : [];
+  const andere = datum ? eintraegeTag(datum).filter(e => e.id !== form.id) : [];
   const sel = feld("eThema");
+  const nummern = subNummern();
   sel.innerHTML = "";
-  th.forEach(t => sel.add(new Option(`${t.titel || "Haupteintrag"}${t.kartenArt === "anreise" ? " (Anreise)" : ""}`, t.id)));
-  if (th.some(t => t.id === form.thema)) sel.value = form.thema;
-  else if (th.length) { sel.value = th[th.length - 1].id; form.thema = sel.value; }
-  feld("eThemaBlock").hidden = aufgeloesteArt() === "thema" || th.length < 2;
+  andere.forEach(e => sel.add(new Option(`vor ${istThema(e) ? `★ ${e.titel || "Haupteintrag"}` : `${nummern.get(e.id) || "▸"} ${e.titel || ortAnzeige(e) || "Sub-Eintrag"}`}`, e.id)));
+  sel.add(new Option("am Ende des Tages", ""));
+  if (form.thema === null || form.thema === undefined) {
+    // bestehender Eintrag: aktueller Nachfolger; neuer Eintrag: am Ende
+    const bisher = form.id ? eintraegeTag(datum) : [];
+    const i = bisher.findIndex(e => e.id === form.id);
+    form.thema = i >= 0 && bisher[i + 1] ? bisher[i + 1].id : "";
+  }
+  sel.value = andere.some(e => e.id === form.thema) ? form.thema : "";
+  feld("eThemaBlock").hidden = !andere.length;
+  feld("eReiheInfo").textContent = aufgeloesteArt() === "thema"
+    ? "Sub-Einträge, die danach folgen, gehören zu diesem Haupteintrag."
+    : "Der Sub-Eintrag gehört zum Haupteintrag, der davor steht.";
+}
+// Position aus der Auswahl berechnen (zwischen Vorgänger und Nachfolger)
+function neuePosition(datum) {
+  const andere = eintraegeTag(datum).filter(e => e.id !== form.id);
+  const vorId = form.thema;
+  const i = vorId ? andere.findIndex(e => e.id === vorId) : -1;
+  if (i < 0) return (andere.length ? posVon(andere[andere.length - 1]) : 0) + 10;
+  const nach = posVon(andere[i]);
+  const vor = i > 0 ? posVon(andere[i - 1]) : nach - 20;
+  return (vor + nach) / 2;
 }
 function istThemaImFormular() { return aufgeloesteArt() === "thema"; }
 function renderRolle() {
@@ -1743,7 +1791,7 @@ function bearbeiteEintrag(id) {
     form.routeModus = (e.route && e.route.modus) || "auto";
     form.vias = (e.vias || []).map(v => ({ ...v }));
     form.kartenArt = kartenArtVon(e);
-    form.thema = istThema(e) ? null : (themaVon(e) || {}).id || null;
+    form.thema = null;   // Position: wird in renderThemaWahl aus der Reihenfolge bestimmt
     feld("eAnzeige").value = istThema(e) ? (e.strecke || "") : (e.ortText || "");
     form.routeModus = (e.route && e.route.modus) || e.modus || (form.kartenArt === "anreise" ? "flug" : "auto");
     if (form.routeModus === "velo") form.routeModus = "auto";
@@ -1831,7 +1879,7 @@ function renderFormFotos() {
   ladeBilderIn(raster);
 }
 
-feld("eDatum").addEventListener("change", renderRolle);
+feld("eDatum").addEventListener("change", () => { form.thema = ""; renderRolle(); });
 feld("eThema").addEventListener("change", ev => { form.thema = ev.target.value; });
 feld("fotoInput").addEventListener("change", async (ev) => {
   const dateien = [...ev.target.files];
@@ -2382,7 +2430,8 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     kartenArt: thema ? form.kartenArt : "",
     strecke: thema ? feld("eAnzeige").value.trim() : undefined,
     ortText: thema ? undefined : feld("eAnzeige").value.trim(),
-    thema: thema ? undefined : (themenAm(datum).some(t => t.id === form.thema) ? form.thema : ((themenAm(datum).slice(-1)[0] || {}).id || null)),
+    pos: bisher && bisher.datum === datum && (form.thema === undefined) ? bisher.pos : neuePosition(datum),
+    thema: undefined,
     vias: form.vias.filter(v => Number.isFinite(v.lat)).map(v => ({ name: (v.name || "").trim(), lat: v.lat, lon: v.lon })),
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
