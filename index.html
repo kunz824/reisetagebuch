@@ -991,7 +991,7 @@
       <div class="stat"><p class="label">Kilometer</p><p class="zahl" id="rKm">–</p></div>
     </div>
     <div id="karte" style="margin-top:6px"></div>
-    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag, die Nummern sind die Sub-Themen. Gold: Tagesroute, blau: Sub-Routen, lang gestrichelt: Schiff, kurz gestrichelt: Luftlinie (ohne Routenplanung).</p>
+    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag. Nummern und Fotos der Sub-Einträge erscheinen beim Hineinzoomen auf eine Tagesroute. Gold: Tagesroute, blau: Sub-Routen, lang gestrichelt: Schiff, kurz gestrichelt: Luftlinie (ohne Routenplanung).</p>
   </section>
 
   <!-- ── Register 4: Bericht ───────────────────────────────────────── -->
@@ -1096,7 +1096,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "02.11.2026 · 22:15";
+const APP_VERSION = "03.11.2026 · 20:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1214,7 +1214,6 @@ let daten = leereDaten();
 function setzeStand(text) { document.getElementById("speicherStand").textContent = text; }
 
 async function speichere() {
-  if (berichtTausch) { speichernNachTausch = true; return; }   // nie mit Bericht-Ortsnamen speichern
   daten.meta = Object.assign({}, daten.meta, { geaendert: new Date().toISOString() });
   try {
     await idb.put("daten", daten, "tagebuch");
@@ -2159,15 +2158,9 @@ function renderPunktInfoNur(k) {
 }
 function setzePunktMeldung(k, text) { feld(ORTSFELDER[k].info).textContent = text; }
 
-// ═════════════════════════════════════════════════════════════════════
-// 02.11.2026: Koordinaten in der App, Ortsnamen in den Berichten
-// In jedes Ortsfeld dürfen Koordinaten eingetippt werden ("-36.8485,
-// 174.7633"); sie setzen den Kartenpunkt direkt. Für PDF und WhatsApp
-// werden Felder mit Koordinaten (oder leere Felder mit Kartenpunkt) durch
-// die Gemeinde/Stadt ersetzt -- automatisch über OpenStreetMap, einmal
-// ermittelt und dann gemerkt (daten.ortschaften). Die Daten selbst bleiben
-// unverändert.
-// ═════════════════════════════════════════════════════════════════════
+// 03.11.2026: Koordinaten dürfen in jedes Ortsfeld eingetippt werden; sie
+// setzen den Kartenpunkt direkt. Die Namen in den Berichten sind immer die
+// selbst geschriebenen (Start, Ziel, Ort), Distanzen aus der Routenplanung.
 // Erkennt Koordinaten irgendwo im Text, in den üblichen Schreibweisen:
 //   -36.8485, 174.7633 · 36.8485° S, 174.7633° E · 36°50'54.6"S 174°45'47.9"E
 const KOORD_DMS = /(\d{1,2})\s*°\s*(\d{1,2})\s*['′’]\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:["″”]|'')?)?\s*([NSns])[\s,;]*(\d{1,3})\s*°\s*(\d{1,2})\s*['′’]\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:["″”]|'')?)?\s*([EWOewo])/;
@@ -2193,96 +2186,15 @@ function koordAusText(t) {
   return [Number(la.toFixed(5)), Number(lo.toFixed(5))];
 }
 const istKoordinate = t => !!koordAusText(t);
-const ortSchluessel = (la, lo) => `${la.toFixed(3)},${lo.toFixed(3)}`;
-// Alle Namensfelder, die für Berichte einen Ortsnamen brauchen
-function ortsnamenBedarf() {
-  const liste = [];
-  const pruefe = (obj, feldName, la, lo) => {
-    const name = obj[feldName] || "";
-    const imText = koordAusText(name);
-    if (name.trim() && !imText) return;   // normaler Ortsname
-    if (!Number.isFinite(la) || !Number.isFinite(lo)) { if (!imText) return; [la, lo] = imText; }
-    liste.push({ obj, feldName, key: ortSchluessel(la, lo), la, lo, koordText: !!imText });
-  };
-  for (const e of daten.eintraege) {
-    pruefe(e, "ort", e.lat, e.lon);
-    pruefe(e, "ziel", e.zielLat, e.zielLon);
-    for (const v of e.vias || []) pruefe(v, "name", v.lat, v.lon);
-  }
-  return liste;
-}
-let berichtTausch = false, speichernNachTausch = false;
-async function ergaenzeOrtsnamen(fortschritt) {
-  daten.ortschaften = daten.ortschaften || {};
-  const offen = [...new Map(ortsnamenBedarf().filter(b => !daten.ortschaften[b.key]).map(b => [b.key, b])).values()];
-  let neu = false;
-  for (let i = 0; i < offen.length; i++) {
-    fortschritt && fortschritt(`Ortsnamen ${i + 1} von ${offen.length} …`);
-    if (i) await new Promise(ok => setTimeout(ok, 1100));   // Nominatim: max. 1 Anfrage pro Sekunde
-    const name = await naechsteOrtschaft(offen[i].la, offen[i].lo);
-    if (name) { daten.ortschaften[offen[i].key] = name; neu = true; }
-  }
-  if (neu) await speichere();
-}
-// Bericht erstellen mit Ortsnamen statt Koordinaten; danach alles zurück
-async function mitOrtsnamen(fn, fortschritt) {
-  if (berichtTausch) return fn();
-  try { await ergaenzeOrtsnamen(fortschritt); } catch { /* offline: Koordinaten bleiben */ }
-  const zurueck = [];
-  for (const b of ortsnamenBedarf()) {
-    const name = daten.ortschaften[b.key] || (b.koordText ? "" : null);   // nie Koordinaten im Bericht
-    if (name === null) continue;
-    const alt = b.obj[b.feldName];
-    zurueck.push(() => { b.obj[b.feldName] = alt; });
-    b.obj[b.feldName] = name;
-  }
-  berichtTausch = true;
-  try { return await fn(); }
-  finally {
-    zurueck.reverse().forEach(f => f());
-    berichtTausch = false;
-    if (speichernNachTausch) { speichernNachTausch = false; speichere(); }
-  }
-}
 
 // Ortsname zu Koordinaten über OpenStreetMap (Nominatim)
-// 02.11.2026: nächstgelegene Ortschaft (Stadt, Kleinstadt, Dorf) -- keine
-// Bezirke, Stadtteile oder Regionen. Über OpenStreetMap (Overpass): alle
-// Ortschaften im Umkreis, die nächste gewinnt; Weiler nur, wenn sonst nichts
-// in der Nähe ist. Rückfall: Nominatim, aber nur Stadt/Ort/Dorf.
-async function naechsteOrtschaft(lat, lon) {
-  for (const radius of [8000, 25000, 60000]) {
-    try {
-      const q = `[out:json][timeout:20];node(around:${radius},${lat},${lon})[place~"^(city|town|village|hamlet)$"][name];out body qt 200;`;
-      const a = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: q }),
-      });
-      if (!a.ok) throw new Error(`Overpass ${a.status}`);
-      const j = await a.json();
-      const orte = (j.elements || []).filter(e => e.tags && e.tags.name && Number.isFinite(e.lat));
-      const name = e => e.tags["name:de"] || e.tags.name;
-      const naechste = liste => liste.sort((x, y) => km([lat, lon], [x.lat, x.lon]) - km([lat, lon], [y.lat, y.lon]))[0];
-      const ortschaft = naechste(orte.filter(e => e.tags.place !== "hamlet"));
-      if (ortschaft) return name(ortschaft);
-      if (radius === 60000 && orte.length) return name(naechste(orte));   // nur Weiler in der Nähe
-    } catch { break; }   // Overpass nicht erreichbar -> Nominatim
-  }
-  try {
-    const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=de&lat=${lat}&lon=${lon}`);
-    if (!a.ok) return "";
-    const ad = (await a.json()).address || {};
-    return ad.city || ad.town || ad.village || ad.hamlet || "";
-  } catch { return ""; }
-}
 async function ortsnameVon(lat, lon, zoom = 12) {
   try {
     const a = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=${zoom}&accept-language=de&lat=${lat}&lon=${lon}`);
     if (!a.ok) return "";
     const j = await a.json();
     const ad = j.address || {};
-    return ad.city || ad.town || ad.village || ad.hamlet || ad.suburb || ad.municipality || ad.county || ad.state_district || ad.state || j.name || "";
+    return ad.city || ad.town || ad.village || ad.hamlet || ad.suburb || ad.municipality || ad.county || j.name || "";
   } catch { return ""; }
 }
 function standortFuer(k) {
@@ -2294,7 +2206,7 @@ function standortFuer(k) {
     form[f.lon] = Number(pos.coords.longitude.toFixed(5));
     renderPunktInfo(k);
     if (!feld(f.eingabe).value.trim()) {
-      const name = await naechsteOrtschaft(form[f.lat], form[f.lon]);
+      const name = await ortsnameVon(form[f.lat], form[f.lon]);
       if (name && !feld(f.eingabe).value.trim()) feld(f.eingabe).value = name;
     }
   }, () => {
@@ -2517,8 +2429,11 @@ function zeichneFahne(g, x, y, s = 1) {
 }
 
 // ── Route: Karte ─────────────────────────────────────────────────────
-let karte = null, karteEbene = null, fotoEbene = null;
-const FOTO_ZOOM = 8;   // ab dieser Zoomstufe erscheinen die Mini-Fotos
+let karte = null, karteEbene = null, fotoEbene = null, nummerEbene = null;
+// 03.11.2026: Übersicht = nur Routen mit Start/Ziel. Nummern und Mini-Fotos
+// der Sub-Einträge erscheinen erst, wenn auf eine Tagesroute gezoomt wird;
+// vorher liegen sie gestapelt (unsichtbar) an ihrem Punkt.
+const FOTO_ZOOM = 8;   // ab dieser Zoomstufe (etwa Grösse einer Tagesroute): Nummern und Mini-Fotos
 let subMarker = [];    // [{p, nummer, foto, html}] für die Anordnung je Zoomstufe
 
 function initKarte() {
@@ -2531,9 +2446,11 @@ function initKarte() {
   L.tileLayer(KACHELN, { maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>-Mitwirkende' }).addTo(karte);
   karteEbene = L.layerGroup().addTo(karte);
   fotoEbene = L.layerGroup();
+  nummerEbene = L.layerGroup();
   // Mini-Fotos nur beim Hineinzoomen zeigen, sonst wird die Karte unruhig
   const fotosUmschalten = () => {
-    if (karte.getZoom() >= FOTO_ZOOM) fotoEbene.addTo(karte); else fotoEbene.remove();
+    const detail = karte.getZoom() >= FOTO_ZOOM;
+    if (detail) { nummerEbene.addTo(karte); fotoEbene.addTo(karte); } else { nummerEbene.remove(); fotoEbene.remove(); }
   };
   karte.on("zoomend", () => { ordneSubMarker(); fotosUmschalten(); });
   karte.whenReady(fotosUmschalten);
@@ -2544,6 +2461,7 @@ function zeichneKarte() {
   karte.invalidateSize();
   karteEbene.clearLayers();
   fotoEbene.clearLayers();
+  nummerEbene.clearLayers();
   const grenzen = [];
   const st = stationen();
   // Luftlinie nur für Tage ohne Routenplanung
@@ -2591,7 +2509,7 @@ function zeichneKarte() {
     const b = document.createElement("strong");
     b.textContent = `Nr. ${e.nr} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
     inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
-    const nummer = L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 + subMarker.length }).bindPopup(inhalt).addTo(karteEbene);
+    const nummer = L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 + subMarker.length }).bindPopup(inhalt).addTo(nummerEbene);
     grenzen.push([e.lat, e.lon]);
     // Mini-Foto direkt über seinem Nummernpunkt, mit derselben Nummer.
     // Antippen öffnet alle Fotos dieses Sub-Themas.
@@ -2617,7 +2535,7 @@ function zeichneKarte() {
 // und Fotos nebeneinander aufgereiht -- so ist jede Nummer mit ihrem Foto
 // sichtbar. Wird bei jeder Zoomstufe neu berechnet.
 function ordneSubMarker() {
-  if (!karte || !subMarker.length) return;
+  if (!karte || !subMarker.length || karte.getZoom() < FOTO_ZOOM) return;   // gestapelt, solange nicht hineingezoomt
   const ABSTAND = 72;   // Pixel: Breite eines Mini-Fotos plus Luft
   const gruppen = [];
   for (const s of subMarker) {
@@ -3078,10 +2996,7 @@ async function bildAusschnitt(id, wmm, hmm, text = "") {
 // Dateiname des Reisebuchs bleibt immer gleich -> im OneDrive "Ersetzen"
 function reisebuchName() { return `${dateiName(reiseTitel())}-reisebuch`; }
 
-function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
-  return mitOrtsnamen(() => erstellePdfIntern(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung), fortschritt);
-}
-async function erstellePdfIntern(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
+async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung) {
   await ladeJsPdf();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
@@ -3758,7 +3673,7 @@ async function oeffneDialogTage(tage) {
   const einzeln = dialogKnopf("Karte für Karte teilen", "btn-abbrechen", () => teileNaechste());
   einzeln.disabled = true;
   dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
-    const text = await mitOrtsnamen(async () => whatsappText(tage), dialogStatus);
+    const text = whatsappText(tage);
     if (navigator.share) { try { await navigator.share({ text }); } catch { /* abgebrochen */ } }
     else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   });
@@ -3772,7 +3687,7 @@ async function oeffneDialogTage(tage) {
   const karten = [];
   const nummern = subNummern();
   try {
-    await mitOrtsnamen(async () => { for (const datum of tage) {
+    for (const datum of tage) {
       const tagNr = String(tagNummer(datum) || 0).padStart(2, "0");
       const titel = await erstelleTitelkarte(datum);
       karten.push(await canvasZuDatei(titel, `tag${tagNr}-0-tagesziel.jpg`));
@@ -3784,7 +3699,7 @@ async function oeffneDialogTage(tage) {
           karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}${teil ? `-${teil + 1}` : ""}.jpg`));
         }
       }
-    } }, dialogStatus);
+    }
   } catch (fehler) {
     console.error(fehler);
     dialogStatus("Die Postkarten konnten nicht erstellt werden. Nur Text oder PDF nutzen.");
