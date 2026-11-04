@@ -541,6 +541,9 @@
     color: var(--text); padding: 9px 10px; font: inherit; font-size: 13.5px; cursor: pointer;
   }
   .via-treffer button small { display: block; color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+  .via-marker.via-ziehbar { width: 28px; height: 28px; line-height: 24px; font-size: 13px; cursor: grab; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .via-weg-knopf { background: var(--neg); color: #fff; border: none; border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  #routenKarte { height: 300px !important; }
   .via-marker {
     width: 20px; height: 20px; border-radius: 50%; background: #d4a24e; color: #10141b;
     border: 2px solid #10141b; font: 700 11px/16px var(--font); text-align: center;
@@ -958,10 +961,11 @@
               <button type="button" data-modus="fuss">🚶 Fuss</button>
             </span>
           </div>
-          <p class="hinweis">Zwischenziele (Adressen) legen den genauen Weg fest. Auf den Karten erscheinen nur Start und Ziel.</p>
+          <p class="hinweis">Zwischenziele legen den genauen Weg fest: <b>auf die Karte tippen</b> setzt einen Punkt (verschiebbar), oder hier eine Adresse eingeben. Sie dienen nur der Route und Distanz.</p>
           <div id="viaListe" class="via-liste"></div>
           <button type="button" class="btn-abbrechen" id="viaNeu">＋ Zwischenziel / Adresse</button>
           <div id="routenKarte"></div>
+          <p class="hinweis" id="routenKartenTipp" style="margin-top:-2px">👆 Tippen = Zwischenziel setzen · Punkt ziehen = verschieben · Punkt antippen = entfernen</p>
           <p class="hinweis" id="routenInfo">Start und Reiseziel mit 📍 oder 🔍 setzen, dann erscheint die Route.</p>
         </div>
       </div>
@@ -1109,7 +1113,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "03.11.2026 · 22:45";
+const APP_VERSION = "04.11.2026 · 21:30";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2001,6 +2005,31 @@ function gueltigeRoute(thema) {
 
 // Kleine Karte im Formular
 let routenKarte = null, routenEbene = null, routenTimer = null, routenLauf = 0;
+let routenAnsichtHalten = false;   // nach Tippen/Ziehen: Ausschnitt nicht neu einpassen
+// 04.11.2026: Zwischenziel per Tippen auf die Karte -- an der Stelle der
+// Route eingefügt, wo es den kleinsten Umweg ergibt.
+function viaAusKarte(lat, lon) {
+  const { start, ziel } = formWegpunkte();
+  if (!start || !ziel) {
+    feld("routenInfo").textContent = "Zuerst Start und Ziel setzen, dann auf der Karte Zwischenziele antippen.";
+    return;
+  }
+  const p = [Number(lat.toFixed(5)), Number(lon.toFixed(5))];
+  const gesetzt = form.vias.filter(v => Number.isFinite(v.lat));
+  const kette = [start, ...gesetzt.map(v => [v.lat, v.lon]), ziel];
+  let besterI = 0, besteKosten = Infinity;
+  for (let i = 0; i < kette.length - 1; i++) {
+    const kosten = km(kette[i], p) + km(p, kette[i + 1]) - km(kette[i], kette[i + 1]);
+    if (kosten < besteKosten) { besteKosten = kosten; besterI = i; }
+  }
+  const neu = { name: `📍 ${p[0].toFixed(4)}, ${p[1].toFixed(4)}`, lat: p[0], lon: p[1] };
+  // Einfügen nach dem besterI-ten gesetzten Zwischenziel (ungesetzte Zeilen bleiben am Ende)
+  const ziel_i = besterI === 0 ? 0 : form.vias.indexOf(gesetzt[besterI - 1]) + 1;
+  form.vias.splice(ziel_i, 0, neu);
+  routenAnsichtHalten = true;
+  renderVias();
+  planeRouteBald();
+}
 function formWegpunkte() {
   const start = Number.isFinite(form.lat) ? [form.lat, form.lon] : null;
   const ziel = Number.isFinite(form.zLat) ? [form.zLat, form.zLon] : null;
@@ -2010,9 +2039,10 @@ function zeichneRoutenKarte() {
   if (feld("routenBlock").closest("[hidden]")) return;
   if (!window.L) { feld("routenKarte").innerHTML = '<p class="leer">Die Karte braucht eine Internetverbindung.</p>'; return; }
   if (!routenKarte) {
-    routenKarte = L.map("routenKarte", { zoomControl: false, attributionControl: true });
+    routenKarte = L.map("routenKarte", { zoomControl: true, attributionControl: true });
     L.tileLayer(KACHELN, { maxZoom: 19, crossOrigin: true, attribution: "© OpenStreetMap" }).addTo(routenKarte);
     routenEbene = L.layerGroup().addTo(routenKarte);
+    routenKarte.on("click", ev => viaAusKarte(ev.latlng.lat, ev.latlng.lng));
   }
   routenKarte.invalidateSize();
   routenEbene.clearLayers();
@@ -2026,13 +2056,36 @@ function zeichneRoutenKarte() {
   }
   const punkt = (p, farbe, r) => L.circleMarker(p, { radius: r, color: "#10141b", weight: 2, fillColor: farbe, fillOpacity: 1 }).addTo(routenEbene);
   form.vias.filter(v => Number.isFinite(v.lat)).forEach((v, i) => {
-    L.marker([v.lat, v.lon], { icon: L.divIcon({ className: "", html: `<div class="via-marker">${i + 1}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) })
-      .bindTooltip(v.name || `Zwischenziel ${i + 1}`).addTo(routenEbene);
+    const m = L.marker([v.lat, v.lon], {
+      draggable: true, zIndexOffset: 300,
+      icon: L.divIcon({ className: "", html: `<div class="via-marker via-ziehbar">${i + 1}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] }),
+    }).addTo(routenEbene);
+    // Verschieben: neuer Punkt, Route neu berechnen
+    m.on("dragend", () => {
+      const ll = m.getLatLng();
+      v.lat = Number(ll.lat.toFixed(5)); v.lon = Number(ll.lng.toFixed(5));
+      if (!v.name || v.name.startsWith("📍")) v.name = `📍 ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)}`;
+      routenAnsichtHalten = true;
+      renderVias(); planeRouteBald();
+    });
+    // Antippen: entfernen (mit Rückfrage über ein kleines Popup)
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = "via-weg-knopf";
+    knopf.textContent = `Zwischenziel ${i + 1} entfernen`;
+    knopf.addEventListener("click", () => {
+      form.vias = form.vias.filter(x => x !== v);
+      routenAnsichtHalten = true;
+      routenKarte.closePopup();
+      renderVias(); planeRouteBald();
+    });
+    m.bindPopup(knopf);
   });
   const gleich = start && ziel && km(start, ziel) < 0.3;
   if (start) L.marker(start, { icon: startZielIcon(true, gleich), zIndexOffset: 200 }).bindTooltip("Start").addTo(routenEbene);
   if (ziel && !gleich) L.marker(ziel, { icon: startZielIcon(false, true), zIndexOffset: 200 }).bindTooltip("Ziel").addTo(routenEbene);
   routenKarte.setMinZoom(1);
+  if (routenAnsichtHalten) { routenAnsichtHalten = false; return; }   // Ausschnitt nach Tippen/Ziehen behalten
   if (grenzen.length > 1) routenKarte.fitBounds(grenzen, { padding: [24, 24], maxZoom: 13 });
   else if (grenzen.length === 1) routenKarte.setView(grenzen[0], 11);
   else routenKarte.setView([46.8, 8.2], 6);
