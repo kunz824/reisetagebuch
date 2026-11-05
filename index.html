@@ -1113,7 +1113,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "04.11.2026 · 21:30";
+const APP_VERSION = "05.11.2026 · 20:30";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1171,23 +1171,44 @@ function db() {
         if (!d.objectStoreNames.contains("daten")) d.createObjectStore("daten");
         if (!d.objectStoreNames.contains("fotos")) d.createObjectStore("fotos", { keyPath: "id" });
       };
-      anfrage.onsuccess = () => ok(anfrage.result);
-      anfrage.onerror = () => fehler(anfrage.error);
+      anfrage.onsuccess = () => {
+        const verbindung = anfrage.result;
+        // 05.11.2026: iOS schliesst die Verbindung gelegentlich (App im
+        // Hintergrund, wenig Speicher). Dann beim nächsten Zugriff neu öffnen.
+        verbindung.onclose = () => { dbVersprechen = null; };
+        verbindung.onversionchange = () => { verbindung.close(); dbVersprechen = null; };
+        ok(verbindung);
+      };
+      anfrage.onerror = () => { dbVersprechen = null; fehler(anfrage.error); };
     });
   }
   return dbVersprechen;
 }
-async function transaktion(speicher, modus, arbeit) {
-  const d = await db();
+function transaktionEinmal(d, speicher, modus, arbeit) {
   return new Promise((ok, fehler) => {
-    const t = d.transaction(speicher, modus);
+    const t = d.transaction(speicher, modus);   // wirft, wenn die Verbindung geschlossen ist
     let ergebnis;
     const anfrage = arbeit(t.objectStore(speicher));
     if (anfrage) anfrage.onsuccess = () => { ergebnis = anfrage.result; };
     t.oncomplete = () => ok(ergebnis);
     t.onerror = () => fehler(t.error);
-    t.onabort = () => fehler(t.error);
+    t.onabort = () => fehler(t.error || new Error("Speicherzugriff abgebrochen"));
   });
+}
+async function transaktion(speicher, modus, arbeit) {
+  for (let versuch = 0; ; versuch++) {
+    const d = await db();
+    try {
+      return await transaktionEinmal(d, speicher, modus, arbeit);
+    } catch (f) {
+      // Verbindung geschlossen ("database connection is closing") -> neu öffnen, nochmals
+      const geschlossen = f && (f.name === "InvalidStateError" || /closing|closed/i.test(f.message || "") || /abgebrochen/.test(f.message || ""));
+      if (!geschlossen || versuch >= 2) throw f;
+      try { d.close(); } catch { /* egal */ }
+      dbVersprechen = null;
+      await new Promise(r => setTimeout(r, 150 * (versuch + 1)));
+    }
+  }
 }
 const idb = {
   get: (s, k) => transaktion(s, "readonly", st => st.get(k)),
