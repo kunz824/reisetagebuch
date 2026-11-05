@@ -1113,7 +1113,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "05.11.2026 · 20:30";
+const APP_VERSION = "05.11.2026 · 21:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1215,6 +1215,7 @@ const idb = {
   put: (s, wert, k) => transaktion(s, "readwrite", st => (k === undefined ? st.put(wert) : st.put(wert, k))),
   del: (s, k) => transaktion(s, "readwrite", st => st.delete(k)),
   alle: s => transaktion(s, "readonly", st => st.getAll()),
+  schluessel: s => transaktion(s, "readonly", st => st.getAllKeys()),
   leeren: s => transaktion(s, "readwrite", st => st.clear()),
 };
 
@@ -4089,12 +4090,23 @@ document.getElementById("sicherungBtn").addEventListener("click", async () => {
   knopf.disabled = true;
   dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
   try {
-    const fotos = [];
-    for (const rec of await idb.alle("fotos")) {
-      fotos.push({ id: rec.id, w: rec.w, h: rec.h, voll: await blobZuDataUrl(rec.voll), klein: await blobZuDataUrl(rec.klein) });
+    // 05.11.2026: Foto für Foto in Teilstücke schreiben statt alles in einen
+    // riesigen Text -- sonst bricht Safari bei vielen Fotos ab ("A problem
+    // repeatedly occurred"). Das Dateiformat bleibt gleich.
+    const ids = await idb.schluessel("fotos");
+    const teile = [`{"format":"reisetagebuch","version":1,"erstellt":${JSON.stringify(new Date().toISOString())},"daten":${JSON.stringify(daten)},"fotos":[`];
+    let n = 0;
+    for (let i = 0; i < ids.length; i++) {
+      dialogStatus(`Sicherung wird erstellt … Foto ${i + 1} von ${ids.length}`);
+      const rec = await idb.get("fotos", ids[i]);
+      if (!rec) continue;
+      const json = JSON.stringify({ id: rec.id, w: rec.w, h: rec.h, voll: await blobZuDataUrl(rec.voll), klein: await blobZuDataUrl(rec.klein) });
+      teile.push(new Blob([(n ? "," : "") + json]));
+      n++;
+      if (i % 10 === 9) await new Promise(r => setTimeout(r, 0));   // Speicher freigeben lassen
     }
-    const blob = new Blob([JSON.stringify({ format: "reisetagebuch", version: 1, erstellt: new Date().toISOString(), daten, fotos })],
-      { type: "application/json" });
+    teile.push("]}");
+    const blob = new Blob(teile, { type: "application/json" });
     // Fester Dateiname (11.10.2026): so ersetzt jede neue Sicherung die alte im
     // OneDrive-Ordner, statt dass sich Dateien mit Datum ansammeln.
     const datei = new File([blob], `${dateiName(reiseTitel())}-sicherung.json`, { type: "application/json" });
