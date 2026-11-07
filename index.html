@@ -1123,7 +1123,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "07.11.2026 · 21:00";
+const APP_VERSION = "07.11.2026 · 23:30";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -2299,7 +2299,10 @@ const MODUS_SYMBOL = { flug: "✈️", auto: "🚗", bahn: "🚆", bus: "🚌", 
 // Bahn gibt es keinen freien Routendienst: Luftlinie, mit Zwischenzielen
 // (Bahnhöfen) lässt sich der Verlauf genauer abbilden.
 const LUFTLINIE_MODI = ["flug", "schiff", "bahn"];
-function erlaubteModi() { return aufgeloesteArt() === "thema" ? ["flug", "auto", "bahn", "bus", "schiff"] : ["flug", "auto", "bahn", "bus", "schiff", "fuss"]; }
+function erlaubteModi() {
+  if (aufgeloesteArt() === "thema" && form.kartenArt === "anreise") return ["flug", "auto", "bahn", "bus", "schiff"];
+  return ["flug", "auto", "bahn", "bus", "schiff", "fuss"];   // 07.11.2026: Detail auch zu Fuss
+}
 function renderModi() {
   const erlaubt = erlaubteModi();
   if (!erlaubt.includes(form.routeModus)) form.routeModus = "auto";
@@ -2794,25 +2797,29 @@ function entflechteTage() {
 // und Fotos nebeneinander aufgereiht -- so ist jede Nummer mit ihrem Foto
 // sichtbar. Wird bei jeder Zoomstufe neu berechnet.
 function ordneSubMarker() {
-  if (!karte || !subMarker.length || karte.getZoom() < DETAIL_ZOOM) return;   // gestapelt, solange nicht hineingezoomt
-  const ABSTAND = 72;   // Pixel: Breite eines Mini-Fotos plus Luft
+  // 07.11.2026: Nummern bleiben auf ihrem Kartenpunkt. Nur Einträge am
+  // (fast) gleichen Ort werden in einem kleinen Kreis darum aufgefächert.
+  if (!karte || !subMarker.length || karte.getZoom() < DETAIL_ZOOM) return;
+  const NAH = 14, RADIUS = 20;
   const gruppen = [];
-  for (const s of subMarker) {
-    const pt = karte.latLngToLayerPoint([s.p.lat, s.p.lon]);
-    const g = gruppen.find(x => x.pt.distanceTo(pt) < ABSTAND);
-    if (g) g.liste.push(s); else gruppen.push({ pt, ll: [s.p.lat, s.p.lon], liste: [s] });
+  for (const sm of subMarker) {
+    const pt = karte.latLngToLayerPoint([sm.p.lat, sm.p.lon]);
+    const g = gruppen.find(x => x.pt.distanceTo(pt) < NAH);
+    if (g) g.liste.push(sm); else gruppen.push({ pt, liste: [sm] });
   }
   for (const g of gruppen) {
     const n = g.liste.length;
-    g.liste.forEach((s, i) => {
-      const dx = n > 1 ? (i - (n - 1) / 2) * ABSTAND : 0;
-      const ll = n > 1 ? g.ll : [s.p.lat, s.p.lon];
-      s.nummer.setLatLng(ll);
-      s.nummer.setIcon(L.divIcon({ className: "", html: `<div class="karte-marker-huelle"><div class="karte-marker">${s.p.nr}</div></div>`, iconSize: [40, 26], iconAnchor: [20 - dx, 13] }));
-      if (s.foto) {
-        s.foto.setLatLng(ll);
-        s.foto.setIcon(L.divIcon({ className: "", html: s.html, iconSize: [64, 64], iconAnchor: [32 - dx, 87] }));
-        const el = s.foto.getElement();
+    g.liste.forEach((sm, i) => {
+      const w = n > 1 ? (2 * Math.PI * i) / n - Math.PI / 2 : 0;
+      const dx = n > 1 ? Math.round(Math.cos(w) * RADIUS) : 0;
+      const dy = n > 1 ? Math.round(Math.sin(w) * RADIUS) : 0;
+      const ll = [sm.p.lat, sm.p.lon];
+      sm.nummer.setLatLng(ll);
+      sm.nummer.setIcon(L.divIcon({ className: "", html: `<div class="karte-marker-huelle"><div class="karte-marker">${sm.p.nr}</div></div>`, iconSize: [40, 26], iconAnchor: [20 - dx, 13 - dy] }));
+      if (sm.foto) {
+        sm.foto.setLatLng(ll);
+        sm.foto.setIcon(L.divIcon({ className: "", html: sm.html, iconSize: [64, 64], iconAnchor: [32 - dx * 3, 87 - dy] }));
+        const el = sm.foto.getElement();
         if (el) ladeBilderIn(el);
       }
     });
@@ -2852,7 +2859,7 @@ async function statischeKarte(opt = {}) {
     const n = 256 * 2 ** z;
     return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
   };
-  let z = 14;
+  let z = opt.zMax || 14;
   for (; z > 0; z--) {
     const p = alle.map(([la, lo]) => px(la, lo, z));
     const bx = Math.max(...p.map(q => q[0])) - Math.min(...p.map(q => q[0]));
@@ -3597,7 +3604,8 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         const bilder = await Promise.all(reihe.map(async kch => {
           if (!kch.karte) return bildAusschnitt(kch.id, ZW, ZH, fotoText(kch.id));
           const linie = abschnittLinien(ab).find(l => l.id === `s${e.id}`);
-          const k = await statischeKarte({ punkte: [{ lat: e.lat, lon: e.lon, nr }], linien: linie ? [linie] : [], B: Math.round(ZW * 7.5), H: Math.round(ZH * 7.5), rand: 50, max: true, ohneLuftlinie: true });
+          // Grössenoptimiert: Strecke füllt das Bild, bei kurzen Wegen bis Zoom 16
+          const k = await statischeKarte({ punkte: [{ lat: e.lat, lon: e.lon, nr }], linien: linie ? [linie] : [], B: Math.round(ZW * 8), H: Math.round(ZH * 8), rand: 34, max: true, zMax: 16, ohneLuftlinie: true });
           return k ? k.url : null;
         }));
         reihe.forEach((kch, j) => {
