@@ -1123,7 +1123,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "07.11.2026 · 19:00";
+const APP_VERSION = "07.11.2026 · 21:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1379,6 +1379,21 @@ function abschnittKm(a) {
   return streckeKm(abschnittPunkte(a).map(p => [p.lat, p.lon]));
 }
 function tagKm(datum) { return abschnitteAm(datum).reduce((sum, a) => sum + abschnittKm(a), 0); }
+// 07.11.2026: Kilometer je Verkehrsmittel -- Hauptrouten und Sub-Routen
+const MODUS_REIHE = ["flug", "bahn", "bus", "auto", "schiff", "fuss", "velo", "ohne"];
+function kmNachModus(abschnitte) {
+  const m = {};
+  const plus = (modus, km2) => { if (km2 > 0) m[modus] = (m[modus] || 0) + km2; };
+  for (const a of abschnitte) {
+    const rt = gueltigeRoute(a.t);
+    plus(rt ? rt.modus : "ohne", abschnittKm(a));
+    for (const e of a.subs) if (istSubRoute(e)) plus((gueltigeRoute(e) || {}).modus || e.modus || "ohne", subRouteKm(e));
+  }
+  return MODUS_REIHE.filter(k => m[k]).map(k => ({ modus: k, km: m[k] }));
+}
+function kmModusText(liste) {
+  return liste.map(x => `${x.modus === "ohne" ? "ohne Routenplanung" : MODUS_TEXT[x.modus]} ${formatZahlCH(x.km, x.km < 10 ? 1 : 0)} km`).join("   ·   ");
+}
 // Sub-Route: Sub-Eintrag mit anderem Ziel oder Zwischenzielen
 function istSubRoute(e) {
   if (!e || istThema(e) || !Number.isFinite(e.lat) || !Number.isFinite(e.zielLat)) return false;
@@ -1438,7 +1453,7 @@ function kennzahlen() {
     tage: anzahlReisetage(),
     eintraege: daten.eintraege.length,
     fotos: daten.eintraege.reduce((s, e) => s + e.fotos.length, 0),
-    kmRoute: tageMitEintraegen().reduce((s, d) => s + tagKm(d), 0),   // Routenplanung bzw. Luftlinie je Tag
+    kmRoute: kmNachModus(tageMitEintraegen().flatMap(d => abschnitteAm(d))).reduce((s, x) => s + x.km, 0),   // Haupt- und Sub-Routen
     stationen: st.filter(p => !p.ziel && !p.start).length,
   };
 }
@@ -3326,6 +3341,14 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       schrift("normal", 8.5, D.grau);
       doc.setCharSpace(0.8); doc.text(text.toUpperCase(), x, fotoH + 46); doc.setCharSpace(0);
     });
+    // 07.11.2026: Kilometer aufgeteilt nach Verkehrsmittel
+    const aufteilung = kmNachModus(tageMitEintraegen().flatMap(d => abschnitteAm(d)));
+    if (aufteilung.length) {
+      schrift("bold", 8, D.grau);
+      doc.text("KILOMETER NACH VERKEHRSMITTEL", R, fotoH + 60);
+      schrift("normal", 10, D.tinte);
+      doc.splitTextToSize(pdfText(kmModusText(aufteilung)), B).forEach((z, i) => doc.text(z, R, fotoH + 66 + i * 5));
+    }
     leer = false;
 
     // ── Routenseite: Karte + Reiseverlauf mit Stationen ──────────────
@@ -3334,7 +3357,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     const alleAb = tageMitEintraegen().flatMap(d => abschnitteAm(d));
     const anreisen = alleAb.filter(a => a.t && kartenArtVon(a.t) === "anreise");
     const karte = await statischeKarte({
-      punkte: anreisen.flatMap(a => abschnittPunkte(a, nummern)).filter(p => p.start || p.ziel),
+      punkte: [],   // 07.11.2026: ohne Start/Ziel und ohne Sub-Einträge
       linien: alleAb.flatMap(a => abschnittLinien(a).filter(l => l.haupt)),
       extra: WELT.box, marken: anreisen.map(abschnittMarke).filter(Boolean),
       B: 1400, H: 760, rand: 16, max: true, ohneLuftlinie: true,
@@ -3359,13 +3382,6 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         const kmT = abschnittKm(ab), rtT = gueltigeRoute(t);
         const zeile = [streckeText(t), kmT >= 1 ? `${formatZahlCH(kmT)} km` : "", rtT ? MODUS_TEXT[rtT.modus] : ""].filter(Boolean).join("  ·  ");
         if (zeile) { doc.text(doc.splitTextToSize(pdfText(zeile), B - 20)[0], R + 18, y); y += 4.6; }
-        // Sub-Routen (z.B. zu Fuss) dieses Abschnitts
-        const sr = ab.subs.filter(istSubRoute);
-        if (sr.length) {
-          schrift("normal", 8, D.grau);
-          const z2 = sr.map(e => `${nummern.get(e.id)} ${e.titel || ortAnzeige(e) || ""}: ${subRouteText(e)}`).join("   ·   ");
-          doc.splitTextToSize(pdfText(z2), B - 20).forEach(z => { platz(4.4); doc.text(z, R + 18, y); y += 4.2; });
-        }
         y += 3.5;
       }
       y += 4;
@@ -3388,7 +3404,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, kh);
       y += kh + 4;
       schrift("normal", 7, D.grau);
-      doc.text(pdfText(`Gold: Tagesrouten · Tag N: Anreise · Karte ${KARTEN_QUELLE}`), R, y);
+      doc.text(pdfText(`Gold: Strecken · Tag N: Anreise · Karte ${KARTEN_QUELLE}`), R, y);
       y += 9;
       if (anreisen.length) verlauf(anreisen);
     }
@@ -3407,7 +3423,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     if (laender.size) {
       let erstes = true;
       for (const { land, tage: lt } of laender.values()) {
-        const linien = lt.flatMap(a => abschnittLinien(a));
+        const linien = lt.flatMap(a => abschnittLinien(a).filter(l => l.haupt));   // ohne Sub-Routen
         // Übersicht: je Abschnitt Route + Rahmen mit "Tag N" in der Mitte, ohne Einzelpunkte
         const rahmen = lt.map(a => {
           const ps = [...abschnittPunkte(a, nummern).map(q => [q.lat, q.lon]), ...abschnittLinien(a).flatMap(l => l.punkte)];
@@ -3507,10 +3523,18 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       const wegZ = doc.splitTextToSize(pdfText(streckeText(thema) || "–"), B - 26);
       doc.text(wegZ, R + 26, y);
       y += (wegZ.length - 1) * 4.6 + 4.8;
-      schrift("normal", 9, D.grau);
-      const modusText = rt ? `${MODUS_TEXT[rt.modus] || ""}${LUFTLINIE_MODI.includes(rt.modus) ? " (Luftlinie)" : ""}` : "Luftlinie";
-      doc.text(pdfText(`${formatZahlCH(kmTag, kmTag < 10 ? 1 : 0)} km   ·   ${modusText}`), R + 26, y);   // 07.11.2026: ohne Zeitangaben
-      y += 6.5;
+      // 07.11.2026: Gesamtroute (Haupt- und Sub-Routen) und Aufteilung nach Verkehrsmittel
+      const auf = kmNachModus([ab]);
+      const gesamt = auf.reduce((sum, x) => sum + x.km, 0);
+      schrift("bold", 8, D.grau); doc.text("Gesamt", R, y + 0.2);
+      schrift("bold", 10, D.tinte);
+      doc.text(pdfText(`${formatZahlCH(gesamt, gesamt < 10 ? 1 : 0)} km`), R + 26, y + 0.2);
+      y += 5;
+      if (auf.length) {
+        schrift("normal", 9, D.grau);
+        doc.splitTextToSize(pdfText(kmModusText(auf)), B - 26).forEach(z => { doc.text(z, R + 26, y); y += 4.6; });
+      }
+      y += 2;
       schrift("bold", 8, D.grau); doc.text("Stationen", R, y);
       if (!subs.length) { schrift("normal", 9, D.grau); doc.text("keine", R + 26, y); y += 5; }
       for (const e of subs) {
@@ -3534,23 +3558,19 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     }
 
     // Sub-Themen
+    // 07.11.2026: Fotos im Einheitsformat, 2 Spalten × 4 Reihen = 8 pro
+    // A4-Seite; mit Text entsprechend weniger, der Rest auf der Folgeseite.
+    // Hat der Sub-Eintrag eine Strecke, steht sie als Karte im Fotoformat
+    // an erster Stelle.
+    const L = 3.5, ZW = (B - L) / 2, ZH = (UNTEN - R - 3 * L) / 4 - 0.5;
     for (const e of subs) {
       const nr = nummern.get(e.id);
-      const L = 3.5, nF = e.fotos.length;
-      const zeilen = [];
-      if (nF === 1) zeilen.push({ h: B * 0.56, felder: [[0, B]] });
-      else if (nF === 2) zeilen.push({ h: 64, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
-      else if (nF === 3) zeilen.push({ h: 96, drei: true });
-      else if (nF === 4) {
-        zeilen.push({ h: 58, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
-        zeilen.push({ h: 58, felder: [[0, (B - L) / 2], [(B + L) / 2, (B - L) / 2]] });
-      } else if (nF > 4) {
-        const d = (B - 2 * L) / 3;
-        for (let j = 0; j < nF; j += 3) zeilen.push({ h: 44, felder: [[0, d], [d + L, d], [2 * (d + L), d]].slice(0, nF - j) });
-      }
+      const kacheln = [];
+      if (istSubRoute(e)) kacheln.push({ karte: true });
+      e.fotos.forEach(id => kacheln.push({ id }));
       schrift("normal", 10.5);
       const textZ = e.text ? pdfText(e.text).split("\n").flatMap(a => a ? doc.splitTextToSize(a, B) : [""]) : [];
-      const kopfH = 26 + (subZeile(e) ? 5 : 0) + textZ.length * 5.2 + (zeilen[0] ? zeilen[0].h + 4 : 0);
+      const kopfH = 26 + (subZeile(e) ? 5 : 0) + textZ.length * 5.2 + (kacheln.length ? ZH + 4 : 0);
       if (y + kopfH > UNTEN && kopfH < UNTEN - R) neueSeite(); else y += 5;
       if (y > R) { doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.line(R, y, R + B, y); }
       y += 8;
@@ -3570,23 +3590,23 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         for (const zeile of textZ) { platz(5.2); doc.text(zeile, R, y + 4.1); y += 5.2; }
         y += 2;
       }
-      let fi = 0;
-      for (const z of zeilen) {
-        platz(z.h + 4);
+      for (let i = 0; i < kacheln.length; i += 2) {
+        platz(ZH + L);
         y += 1;
-        if (z.drei) {
-          const gb = (B - L) * 0.64, kb = B - L - gb, kh = (z.h - L) / 2;
-          const [u0, u1, u2] = await Promise.all([bildAusschnitt(e.fotos[0], gb, z.h, fotoText(e.fotos[0])), bildAusschnitt(e.fotos[1], kb, kh, fotoText(e.fotos[1])), bildAusschnitt(e.fotos[2], kb, kh, fotoText(e.fotos[2]))]);
-          if (u0) doc.addImage(u0, "JPEG", R, y, gb, z.h);
-          if (u1) doc.addImage(u1, "JPEG", R + gb + L, y, kb, kh);
-          if (u2) doc.addImage(u2, "JPEG", R + gb + L, y + kh + L, kb, kh);
-          fi += 3;
-        } else {
-          const urls = await Promise.all(z.felder.map((f, j) => bildAusschnitt(e.fotos[fi + j], f[1], z.h, fotoText(e.fotos[fi + j]))));
-          z.felder.forEach((f, j) => { if (urls[j]) doc.addImage(urls[j], "JPEG", R + f[0], y, f[1], z.h); });
-          fi += z.felder.length;
-        }
-        y += z.h + L - 1;
+        const reihe = kacheln.slice(i, i + 2);
+        const bilder = await Promise.all(reihe.map(async kch => {
+          if (!kch.karte) return bildAusschnitt(kch.id, ZW, ZH, fotoText(kch.id));
+          const linie = abschnittLinien(ab).find(l => l.id === `s${e.id}`);
+          const k = await statischeKarte({ punkte: [{ lat: e.lat, lon: e.lon, nr }], linien: linie ? [linie] : [], B: Math.round(ZW * 7.5), H: Math.round(ZH * 7.5), rand: 50, max: true, ohneLuftlinie: true });
+          return k ? k.url : null;
+        }));
+        reihe.forEach((kch, j) => {
+          if (!bilder[j]) return;
+          const x = R + j * (ZW + L);
+          doc.addImage(bilder[j], "JPEG", x, y, ZW, ZH);
+          if (kch.karte) { doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(x, y, ZW, ZH); }
+        });
+        y += ZH + L - 1;
       }
     }
   }
