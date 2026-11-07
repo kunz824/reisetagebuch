@@ -615,6 +615,14 @@
   }
   .karte-marker.ziel { background: var(--bg-panel-2); font-size: 13px; border-color: var(--accent); }
   .karte-marker-huelle { width: 40px; height: 26px; display: flex; justify-content: center; }
+  .tag-marke {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 54px; height: 24px; padding: 0 8px; border-radius: 12px;
+    background: #10141b; color: var(--accent); border: 2px solid var(--accent);
+    font-size: 12px; font-weight: 700; white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,.45);
+  }
+  .tag-marke.anreise { color: #fff; border-color: #fff; }
   .karte-marker {
     min-width: 26px;
     height: 26px;
@@ -957,6 +965,8 @@
             <span class="routen-modus" id="routenModus" role="group" aria-label="Verkehrsmittel">
               <button type="button" data-modus="flug">✈️ Flug</button>
               <button type="button" data-modus="auto" class="aktiv">🚗 Auto</button>
+              <button type="button" data-modus="bahn">🚆 Bahn</button>
+              <button type="button" data-modus="bus">🚌 Bus</button>
               <button type="button" data-modus="schiff">⛴️ Schiff</button>
               <button type="button" data-modus="fuss">🚶 Fuss</button>
             </span>
@@ -1008,7 +1018,7 @@
       <div class="stat"><p class="label">Kilometer</p><p class="zahl" id="rKm">–</p></div>
     </div>
     <div id="karte" style="margin-top:6px"></div>
-    <p class="hinweis" style="margin-top:8px">📍 Start und 🏁 Ziel kommen aus dem Haupteintrag. Nummern und Fotos der Sub-Einträge erscheinen beim Hineinzoomen auf eine Tagesroute. Gold: Tagesroute, blau: Sub-Routen, lang gestrichelt: Schiff, kurz gestrichelt: Luftlinie (ohne Routenplanung).</p>
+    <p class="hinweis" style="margin-top:8px">«Tag N» steht in der Mitte jeder Tagesstrecke. Beim Hineinzoomen auf eine Tagesroute erscheinen die Nummern der Sub-Einträge, noch näher auch die Fotos. Gold: Tagesroute, blau: Sub-Routen, lang gestrichelt: Schiff, gepunktet: Bahn, kurz gestrichelt: Luftlinie (ohne Routenplanung).</p>
   </section>
 
   <!-- ── Register 4: Bericht ───────────────────────────────────────── -->
@@ -1113,7 +1123,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "05.11.2026 · 21:00";
+const APP_VERSION = "07.11.2026 · 19:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1407,10 +1417,10 @@ function abschnittLinien(a) {
 }
 // Strichart je Verkehrsmittel
 function linienStil(l) {
-  return { farbe: l.sub ? "#2f8aa0" : "#b57d1e", breite: l.sub ? 4.5 : 6, strich: l.modus === "schiff" ? [16, 11] : l.modus === "flug" ? [] : null };
+  return { farbe: l.sub ? "#2f8aa0" : "#b57d1e", breite: l.sub ? 4.5 : 6, strich: l.modus === "schiff" ? [16, 11] : l.modus === "bahn" ? [4, 9] : null };
 }
 function leafletStil(modus, sub) {
-  return { color: sub ? "#5aa9bb" : "#d4a24e", opacity: 0.95, dashArray: modus === "schiff" ? "9 7" : null };
+  return { color: sub ? "#5aa9bb" : "#d4a24e", opacity: 0.95, dashArray: modus === "schiff" ? "9 7" : modus === "bahn" ? "2 6" : null };
 }
 function tagStrecke(datum) {   // Strecke(n) des Tages aus den Berichtsfeldern
   return themenAm(datum).map(streckeText).filter(Boolean).join(" / ");
@@ -1941,6 +1951,7 @@ feld("fotoInput").addEventListener("change", async (ev) => {
 // ═════════════════════════════════════════════════════════════════════
 const ROUTING = {
   auto: ["https://routing.openstreetmap.de/routed-car/route/v1/driving/", "https://router.project-osrm.org/route/v1/driving/"],
+  bus: ["https://routing.openstreetmap.de/routed-car/route/v1/driving/", "https://router.project-osrm.org/route/v1/driving/"],
   fuss: ["https://routing.openstreetmap.de/routed-foot/route/v1/driving/"],
 };
 // Wegpunkte der Route: Start, Zwischenziele (Adressen), Reiseziel
@@ -1983,7 +1994,7 @@ function grosskreis(w, n = 64) {
 }
 async function berechneRoute(modus, w) {
   if (w.length < 2) return null;
-  if (modus === "flug" || modus === "schiff") {   // Luftlinie über die Erdkugel
+  if (LUFTLINIE_MODI.includes(modus)) {   // Luftlinie über die Erdkugel
     return { modus, km: Math.round(streckeKm(w)), min: null, punkte: grosskreis(w), schluessel: routenSchluessel(modus, w) };
   }
   const koord = w.map(([la, lo]) => `${lo.toFixed(5)},${la.toFixed(5)}`).join(";");
@@ -2128,10 +2139,10 @@ function renderRoutenInfo() {
   }
   if (form.route) {
     const ueber = w.length > 2 ? ` · über ${w.length - 2} Zwischen${form.route.modus === "flug" ? "stopp" : "ziel"}${w.length === 3 ? "" : "e"}` : "";
-    const luft = form.route.modus === "flug" || form.route.modus === "schiff";
+    const luft = LUFTLINIE_MODI.includes(form.route.modus);
     info.textContent = luft
-      ? `${MODUS_SYMBOL[form.route.modus]} ${formatZahlCH(form.route.km, 0)} km ${form.route.modus === "flug" ? "Flugstrecke" : "Seeweg"} (Luftlinie)${ueber}`
-      : `${MODUS_SYMBOL[form.route.modus] || ""} ${formatZahlCH(form.route.km, form.route.km < 10 ? 1 : 0)} km · ca. ${dauerText(form.route.min)}${ueber}`;
+      ? `${MODUS_SYMBOL[form.route.modus]} ${formatZahlCH(form.route.km, form.route.km < 10 ? 1 : 0)} km ${{ flug: "Flugstrecke", schiff: "Seeweg", bahn: "Bahnstrecke" }[form.route.modus]} (Luftlinie)${ueber}`
+      : `${MODUS_SYMBOL[form.route.modus] || ""} ${formatZahlCH(form.route.km, form.route.km < 10 ? 1 : 0)} km${ueber}`;
   }
 }
 // Route neu berechnen, sobald sich Start, Ziel oder Verkehrsmittel ändern
@@ -2267,9 +2278,13 @@ function renderKartenArt() {
   feld("kartenArtInfo").textContent = KARTEN_ART_INFO[form.kartenArt] || "";
 }
 // Verkehrsmittel: Haupteintrag Flug/Auto/Schiff, Sub-Eintrag zusätzlich zu Fuss
-const MODUS_TEXT = { flug: "Flug", auto: "Auto", schiff: "Schiff", fuss: "zu Fuss", velo: "Velo" };
-const MODUS_SYMBOL = { flug: "✈️", auto: "🚗", schiff: "⛴️", fuss: "🚶", velo: "🚲" };
-function erlaubteModi() { return aufgeloesteArt() === "thema" ? ["flug", "auto", "schiff"] : ["flug", "auto", "schiff", "fuss"]; }
+const MODUS_TEXT = { flug: "Flug", auto: "Auto", bahn: "Bahn", bus: "Bus", schiff: "Schiff", fuss: "zu Fuss", velo: "Velo" };
+const MODUS_SYMBOL = { flug: "✈️", auto: "🚗", bahn: "🚆", bus: "🚌", schiff: "⛴️", fuss: "🚶", velo: "🚲" };
+// 07.11.2026: Bahn und Bus. Bus fährt auf der Strasse (Strassenroute), für die
+// Bahn gibt es keinen freien Routendienst: Luftlinie, mit Zwischenzielen
+// (Bahnhöfen) lässt sich der Verlauf genauer abbilden.
+const LUFTLINIE_MODI = ["flug", "schiff", "bahn"];
+function erlaubteModi() { return aufgeloesteArt() === "thema" ? ["flug", "auto", "bahn", "bus", "schiff"] : ["flug", "auto", "bahn", "bus", "schiff", "fuss"]; }
 function renderModi() {
   const erlaubt = erlaubteModi();
   if (!erlaubt.includes(form.routeModus)) form.routeModus = "auto";
@@ -2608,7 +2623,12 @@ let karte = null, karteEbene = null, fotoEbene = null, nummerEbene = null;
 // 03.11.2026: Übersicht = nur Routen mit Start/Ziel. Nummern und Mini-Fotos
 // der Sub-Einträge erscheinen erst, wenn auf eine Tagesroute gezoomt wird;
 // vorher liegen sie gestapelt (unsichtbar) an ihrem Punkt.
-const FOTO_ZOOM = 8;   // ab dieser Zoomstufe (etwa Grösse einer Tagesroute): Nummern und Mini-Fotos
+// 07.11.2026: drei Stufen -- Übersicht: Strecken mit "Tag N";
+// ab DETAIL_ZOOM (etwa eine Tagesroute): Nummern der Sub-Einträge;
+// ab FOTO_ZOOM: zusätzlich die Mini-Fotos.
+const DETAIL_ZOOM = 8;
+const FOTO_ZOOM = 11;
+let tagEbene = null, tagMarker = [];
 let subMarker = [];    // [{p, nummer, foto, html}] für die Anordnung je Zoomstufe
 
 function initKarte() {
@@ -2622,10 +2642,13 @@ function initKarte() {
   karteEbene = L.layerGroup().addTo(karte);
   fotoEbene = L.layerGroup();
   nummerEbene = L.layerGroup();
-  // Mini-Fotos nur beim Hineinzoomen zeigen, sonst wird die Karte unruhig
+  tagEbene = L.layerGroup().addTo(karte);
+  // Nummern und Mini-Fotos nur beim Hineinzoomen zeigen, sonst wird die Karte unruhig
   const fotosUmschalten = () => {
-    const detail = karte.getZoom() >= FOTO_ZOOM;
-    if (detail) { nummerEbene.addTo(karte); fotoEbene.addTo(karte); } else { nummerEbene.remove(); fotoEbene.remove(); }
+    const z = karte.getZoom();
+    if (z >= DETAIL_ZOOM) nummerEbene.addTo(karte); else nummerEbene.remove();
+    if (z >= FOTO_ZOOM) fotoEbene.addTo(karte); else fotoEbene.remove();
+    entflechteTage();
   };
   karte.on("zoomend", () => { ordneSubMarker(); fotosUmschalten(); });
   karte.whenReady(fotosUmschalten);
@@ -2657,54 +2680,98 @@ function zeichneKarte() {
       grenzen.push(...l.punkte);
     }
   }
-  // 11.10.2026: Haupteintrag (Start/Ziel) = eine Stecknadel, Sub-Themen = Nummer.
-  // Fallen Start und Ziel auf denselben Ort (z.B. Ziel von Tag 2 = Start von
-  // Tag 3), erscheint nur eine Stecknadel, im Popup stehen beide Angaben.
-  // 27.10.2026: Start = Stecknadel, Ziel = Zielfahne. Am selben Ort (Ziel
-  // von Tag 2 = Start von Tag 3) stehen beide Symbole nebeneinander.
-  const nadeln = [];
-  for (const e of st.filter(p => p.start || p.ziel)) {
-    const label = `${e.ziel ? "🏁 Ziel" : "📍 Start"} ${tagLabel(e.datum)}: ${e.ort || ""}`;
-    const da = nadeln.find(n => km([n.lat, n.lon], [e.lat, e.lon]) < 0.3);
-    if (da) { da.labels.push(label); da[e.ziel ? "ziel" : "start"] = true; }
-    else nadeln.push({ lat: e.lat, lon: e.lon, labels: [label], start: !!e.start, ziel: !!e.ziel });
-  }
-  const subPunkte = st.filter(p => !p.start && !p.ziel);
-  for (const n of nadeln) {
-    // Liegt an derselben Stelle ein nummerierter Punkt, Symbol links daneben setzen
-    const belegt = subPunkte.some(p => km([p.lat, p.lon], [n.lat, n.lon]) < 0.3);
-    const icon = startZielIcon(n.start, n.ziel, belegt);
-    const inhalt = document.createElement("div");
-    n.labels.forEach((t, i) => { if (i) inhalt.appendChild(document.createElement("br")); inhalt.append(t); });
-    L.marker([n.lat, n.lon], { icon, zIndexOffset: 200 }).bindPopup(inhalt).addTo(karteEbene);
-    grenzen.push([n.lat, n.lon]);
-  }
+  // 07.11.2026: Statt Start/Ziel je Streckenabschnitt "Tag N" in der Mitte
+  // der Strecke; Sub-Einträge (auch Sub-Routen, z.B. zu Fuss) mit Nummer und
+  // Foto-Kreis -- bei Sub-Routen in der Mitte ihrer Strecke.
+  tagEbene.clearLayers();
+  tagMarker = [];
+  const nummern = subNummern();
   subMarker = [];
-  for (const e of st.filter(p => !p.start && !p.ziel)) {
-    const icon = L.divIcon({ className: "", html: `<div class="karte-marker-huelle"><div class="karte-marker">${e.nr}</div></div>`, iconSize: [40, 26], iconAnchor: [20, 13] });
-    const inhalt = document.createElement("div");
-    const b = document.createElement("strong");
-    b.textContent = `Nr. ${e.nr} · ${tagLabel(e.datum)} · ${datumKurz(e.datum)}`;
-    inhalt.append(b, document.createElement("br"), e.titel || e.ort || "");
-    const nummer = L.marker([e.lat, e.lon], { icon, zIndexOffset: 300 + subMarker.length }).bindPopup(inhalt).addTo(nummerEbene);
-    grenzen.push([e.lat, e.lon]);
-    // Mini-Foto direkt über seinem Nummernpunkt, mit derselben Nummer.
-    // Antippen öffnet alle Fotos dieses Sub-Themas.
-    let foto = null, html = "";
-    if (e.fotos && e.fotos.length) {
-      html = `<div class="karte-foto-huelle"><div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}"><span class="foto-nr">${e.nr}</span>${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length} Fotos</span>` : ""}</div></div>`;
-      foto = L.marker([e.lat, e.lon], { icon: L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [32, 87] }), zIndexOffset: 500 + subMarker.length })
-        .on("click", () => oeffneLightbox(e.fotos, 0))
-        .on("add", () => { const el = foto.getElement(); if (el) ladeBilderIn(el); });
-      foto.addTo(fotoEbene);
+  for (const datum of tageMitEintraegen()) {
+    for (const a of abschnitteAm(datum)) {
+      const haupt = abschnittLinien(a).find(l => l.haupt);
+      const pk = abschnittPunkte(a, nummern);
+      const linie = haupt ? haupt.punkte : (pk.length ? pk.map(p => [p.lat, p.lon]) : null);
+      if (linie && linie.length) {
+        const mitte = linienMitte(linie);
+        const text = tagNummer(datum) ? `Tag ${tagNummer(datum)}` : tagLabel(datum);
+        const inhalt = document.createElement("div");
+        const b = document.createElement("strong");
+        b.textContent = `${tagLabel(datum)} · ${datumKurz(datum)}`;
+        inhalt.append(b, document.createElement("br"), a.t ? `${a.t.titel || ""}` : "", a.t ? document.createElement("br") : "", streckeZeile(a));
+        const m = L.marker(mitte, {
+          icon: L.divIcon({ className: "", html: `<div class="tag-marke${a.t && kartenArtVon(a.t) === "anreise" ? " anreise" : ""}">${text}</div>`, iconSize: [64, 26], iconAnchor: [32, 13] }),
+          zIndexOffset: 250,
+        }).bindPopup(inhalt).addTo(tagEbene);
+        tagMarker.push(m);
+        grenzen.push(...linie);
+      }
+      for (const e of a.subs) {
+        if (!Number.isFinite(e.lat) || !Number.isFinite(e.lon)) continue;
+        const sl = abschnittLinien(a).find(l => l.id === `s${e.id}`);
+        const ort = sl ? linienMitte(sl.punkte) : [e.lat, e.lon];
+        const p = { lat: ort[0], lon: ort[1], nr: nummern.get(e.id), fotos: e.fotos, titel: e.titel, datum };
+        const icon = L.divIcon({ className: "", html: `<div class="karte-marker-huelle"><div class="karte-marker">${p.nr}</div></div>`, iconSize: [40, 26], iconAnchor: [20, 13] });
+        const inhalt = document.createElement("div");
+        const b = document.createElement("strong");
+        b.textContent = `Nr. ${p.nr} · ${tagLabel(datum)} · ${datumKurz(datum)}`;
+        inhalt.append(b, document.createElement("br"), e.titel || ortAnzeige(e) || "");
+        if (subZeile(e)) inhalt.append(document.createElement("br"), subZeile(e));
+        const nummer = L.marker(ort, { icon, zIndexOffset: 300 + subMarker.length }).bindPopup(inhalt).addTo(nummerEbene);
+        grenzen.push(ort);
+        let foto = null, html = "";
+        if (e.fotos && e.fotos.length) {
+          html = `<div class="karte-foto-huelle"><div class="karte-foto"><img alt="" data-foto="${e.fotos[0]}"><span class="foto-nr">${p.nr}</span>${e.fotos.length > 1 ? `<span class="anzahl">${e.fotos.length} Fotos</span>` : ""}</div></div>`;
+          foto = L.marker(ort, { icon: L.divIcon({ className: "", html, iconSize: [64, 64], iconAnchor: [32, 87] }), zIndexOffset: 500 + subMarker.length })
+            .on("click", () => oeffneLightbox(e.fotos, 0))
+            .on("add", () => { const el = foto.getElement(); if (el) ladeBilderIn(el); });
+          foto.addTo(fotoEbene);
+        }
+        subMarker.push({ p, nummer, foto, html });
+      }
     }
-    subMarker.push({ p: e, nummer, foto, html });
   }
   // Platz oben für die Mini-Fotos lassen
   if (grenzen.length > 1) karte.fitBounds(grenzen, { paddingTopLeft: [50, 100], paddingBottomRight: [50, 30], maxZoom: 13 });
   else if (grenzen.length === 1) karte.setView(grenzen[0], 11);
   else karte.setView([46.8, 8.2], 7);
   ordneSubMarker();
+  entflechteTage();
+}
+// Punkt in der Mitte einer Linie (halbe Länge)
+function abschnittMarke(a) {
+  const haupt = abschnittLinien(a).find(l => l.haupt);
+  const pk = abschnittPunkte(a).map(p => [p.lat, p.lon]);
+  const linie = haupt ? haupt.punkte : pk;
+  if (!linie.length) return null;
+  return { pos: linienMitte(linie), label: tagNummer(a.datum) ? `Tag ${tagNummer(a.datum)}` : tagLabel(a.datum), anreise: !!(a.t && kartenArtVon(a.t) === "anreise") };
+}
+function linienMitte(punkte) {
+  if (punkte.length < 2) return punkte[0];
+  let gesamt = 0;
+  const teil = [];
+  for (let i = 1; i < punkte.length; i++) { const d = km(punkte[i - 1], punkte[i]); teil.push(d); gesamt += d; }
+  let rest = gesamt / 2;
+  for (let i = 0; i < teil.length; i++) {
+    if (rest <= teil[i] && teil[i] > 0) {
+      const f = rest / teil[i];
+      return [punkte[i][0] + (punkte[i + 1][0] - punkte[i][0]) * f, punkte[i][1] + (punkte[i + 1][1] - punkte[i][1]) * f];
+    }
+    rest -= teil[i];
+  }
+  return punkte[Math.floor(punkte.length / 2)];
+}
+// "Tag N"-Marken: überlappende ausblenden (gestapelt), beim Zoomen neu
+function entflechteTage() {
+  if (!karte || !tagMarker.length) return;
+  const gezeigt = [];
+  for (const m of tagMarker) {
+    const pt = karte.latLngToLayerPoint(m.getLatLng());
+    const frei = !gezeigt.some(q => Math.abs(q.x - pt.x) < 66 && Math.abs(q.y - pt.y) < 28);
+    const el = m.getElement();
+    if (el) el.style.display = frei ? "" : "none";
+    if (frei) gezeigt.push(pt);
+  }
 }
 
 // 11.10.2026: Liegen Sub-Themen auf der Karte so nah beisammen, dass sie sich
@@ -2712,7 +2779,7 @@ function zeichneKarte() {
 // und Fotos nebeneinander aufgereiht -- so ist jede Nummer mit ihrem Foto
 // sichtbar. Wird bei jeder Zoomstufe neu berechnet.
 function ordneSubMarker() {
-  if (!karte || !subMarker.length || karte.getZoom() < FOTO_ZOOM) return;   // gestapelt, solange nicht hineingezoomt
+  if (!karte || !subMarker.length || karte.getZoom() < DETAIL_ZOOM) return;   // gestapelt, solange nicht hineingezoomt
   const ABSTAND = 72;   // Pixel: Breite eines Mini-Fotos plus Luft
   const gruppen = [];
   for (const s of subMarker) {
@@ -2761,7 +2828,7 @@ async function statischeKarte(opt = {}) {
   const alle = [...st.map(e => [e.lat, e.lon]), ...tracks.flatMap(t => t.punkte), ...(opt.extra || [])];
   if (!alle.length) return null;
   const B = opt.B || 1400, H = opt.H || 900, RAND = opt.rand || 70;
-  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H, RAND, !!opt.max, opt.extra || 0, opt.rechteck || 0, (opt.rahmen || []).map(x => [x.label, x.box])]);
+  const schluessel = JSON.stringify([st.map(e => [e.lat, e.lon, e.nr || 0]), tracks.map(t => t.id + (t.punkte ? t.punkte.length : 0)), B, H, RAND, !!opt.max, opt.extra || 0, opt.rechteck || 0, (opt.rahmen || []).map(x => [x.label, x.box]), (opt.marken || []).map(x => [x.label, x.pos])]);
   if (!opt.punkte && karteCache.schluessel === schluessel && karteCache.bild) return karteCache.bild;
   if (opt.punkte && karteCacheMehr.has(schluessel)) return karteCacheMehr.get(schluessel);
 
@@ -2816,10 +2883,10 @@ async function statischeKarte(opt = {}) {
       const pad = Math.max(10, B * 0.012);
       let x = Math.min(a1[0], b1[0]) - pad, y = Math.min(a1[1], b1[1]) - pad;
       let w = Math.abs(b1[0] - a1[0]) + 2 * pad, h = Math.abs(b1[1] - a1[1]) + 2 * pad;
-      g.fillStyle = "rgba(212,162,78,0.10)"; g.fillRect(x, y, w, h);
-      g.lineWidth = Math.max(2.5, B * 0.0028); g.strokeStyle = "#b57d1e"; g.setLineDash([]);
-      g.strokeRect(x, y, w, h);
-      rb.mitte = [x + w / 2, y + h / 2];
+      // 07.11.2026: Rahmen dezent im Hintergrund; Strecke und "Tag N" darüber
+      g.fillStyle = "rgba(212,162,78,0.07)"; g.fillRect(x, y, w, h);
+      g.lineWidth = Math.max(1.5, B * 0.0016); g.strokeStyle = "rgba(181,125,30,0.55)"; g.setLineDash([8, 6]);
+      g.strokeRect(x, y, w, h); g.setLineDash([]);
     }
     if (opt.rechteck) {
       const [a1, b1] = [auf(opt.rechteck[0]), auf(opt.rechteck[1])];
@@ -2828,8 +2895,9 @@ async function statischeKarte(opt = {}) {
       const min = Math.max(14, B * 0.06);
       if (w < min) { x -= (min - w) / 2; w = min; }
       if (h < min) { y -= (min - h) / 2; h = min; }
-      g.fillStyle = "rgba(224,96,90,0.22)"; g.fillRect(x, y, w, h);
-      g.lineWidth = Math.max(3, B * 0.012); g.strokeStyle = "#d9483b"; g.strokeRect(x, y, w, h);
+      g.fillStyle = "rgba(224,96,90,0.12)"; g.fillRect(x, y, w, h);
+      g.lineWidth = Math.max(1.5, B * 0.006); g.strokeStyle = "rgba(217,72,59,0.6)"; g.setLineDash([6, 5]);
+      g.strokeRect(x, y, w, h); g.setLineDash([]);
     }
     for (const t of [...tracks].sort((a, b) => !!b.haupt - !!a.haupt)) {
       const st2 = linienStil(t);
@@ -2847,17 +2915,20 @@ async function statischeKarte(opt = {}) {
       seg.forEach((e, i) => { const [x, y] = auf([e.lat, e.lon]); i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.stroke(); g.setLineDash([]);
     }
-    for (const rb of opt.rahmen || []) {
-      if (!rb.mitte) continue;
-      const fs = Math.round(Math.max(16, B * 0.022));
+    // 07.11.2026: "Tag N" in der Mitte der Strecke (überlappende werden versetzt)
+    const belegtM = [];
+    for (const mk of opt.marken || []) {
+      const fs = Math.round(Math.max(opt.markenKlein ? 11 : 16, B * (opt.markenKlein ? 0.05 : 0.02)));
       g.font = `700 ${fs}px Arial, Helvetica, sans-serif`;
-      const tw = g.measureText(rb.label).width + fs * 1.1, th = fs * 1.6;
-      const [mx2, my2] = rb.mitte;
-      g.fillStyle = "#ffffff"; g.strokeStyle = "#b57d1e"; g.lineWidth = 2.5;
+      const tw = g.measureText(mk.label).width + fs * 1.1, th = fs * 1.6;
+      let [mx2, my2] = auf(mk.pos);
+      for (let v = 0; v < 6 && belegtM.some(q => Math.abs(q[0] - mx2) < (q[2] + tw) / 2 && Math.abs(q[1] - my2) < th); v++) my2 += th * 1.05;
+      belegtM.push([mx2, my2, tw]);
+      g.fillStyle = mk.anreise ? "#10141b" : "#ffffff"; g.strokeStyle = "#b57d1e"; g.lineWidth = Math.max(1.5, fs * 0.14);
       g.beginPath(); g.roundRect ? g.roundRect(mx2 - tw / 2, my2 - th / 2, tw, th, th / 2) : g.rect(mx2 - tw / 2, my2 - th / 2, tw, th);
       g.fill(); g.stroke();
-      g.fillStyle = "#23262c"; g.textAlign = "center"; g.textBaseline = "middle";
-      g.fillText(rb.label, mx2, my2 + 1);
+      g.fillStyle = mk.anreise ? "#d4a24e" : "#23262c"; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(mk.label, mx2, my2 + 1);
     }
     // Sub-Themen: goldene Nummern
     st.filter(e => !e.start && !e.ziel).forEach((e) => {
@@ -2972,7 +3043,8 @@ async function abschnittKarte(a, B, H, nummern) {
   const [[s, w], [n, e]] = land.box;
   const verh = Math.max(0.55, Math.min(1.8, (merc(n) - merc(s)) / ((e - w) * Math.PI / 180)));
   const iw = Math.round(Math.min(B, H * 1.6) * 0.27), ih = Math.round(iw * verh);
-  const uebersicht = await statischeKarte({ punkte: [], extra: land.box, rechteck, B: iw, H: ih, rand: Math.round(iw * 0.05), max: true });
+  const marke = abschnittMarke(a);
+  const uebersicht = await statischeKarte({ punkte: [], linien: abschnittLinien(a).filter(l => l.haupt), extra: land.box, rechteck, marken: marke ? [marke] : [], markenKlein: true, B: iw, H: ih, rand: Math.round(iw * 0.05), max: true });
   const [bd, bu] = await Promise.all([bildLaden(detail.url), uebersicht ? bildLaden(uebersicht.url) : null]);
   if (!bd || !bu) return detail;
   // Ecke mit den wenigsten Routenpunkten wählen
@@ -3257,8 +3329,47 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     leer = false;
 
     // ── Routenseite: Karte + Reiseverlauf mit Stationen ──────────────
-    fortschritt && fortschritt("Routenkarte …");
-    const karte = await statischeKarte();
+    fortschritt && fortschritt("Weltkarte …");
+    // 07.11.2026: Weltkarte mit der Anreise ("Tag N" an der Flugstrecke)
+    const alleAb = tageMitEintraegen().flatMap(d => abschnitteAm(d));
+    const anreisen = alleAb.filter(a => a.t && kartenArtVon(a.t) === "anreise");
+    const karte = await statischeKarte({
+      punkte: anreisen.flatMap(a => abschnittPunkte(a, nummern)).filter(p => p.start || p.ziel),
+      linien: alleAb.flatMap(a => abschnittLinien(a).filter(l => l.haupt)),
+      extra: WELT.box, marken: anreisen.map(abschnittMarke).filter(Boolean),
+      B: 1400, H: 760, rand: 16, max: true, ohneLuftlinie: true,
+    });
+    const gelistet = new Set();
+    const abKey = ab => (ab.t ? ab.t.id : `tag-${ab.datum}`);
+    // Kurzer Verlauf unter der jeweiligen Karte: Tag, Titel, Strecke, Distanz
+    const verlauf = (liste) => {
+      y += 1;
+      for (const ab of liste) {
+        gelistet.add(abKey(ab));
+        const datum = ab.datum, t = ab.t;
+        platz(11);
+        doc.setDrawColor(...D.linie); doc.setLineWidth(0.2); doc.line(R, y - 4.2, R + B, y - 4.2);
+        schrift("bold", 10, D.gold);
+        doc.text(pdfText(tagLabel(datum)), R, y);
+        schrift("bold", 10, D.tinte);
+        doc.text(doc.splitTextToSize(pdfText((t && t.titel) || ""), B - 70)[0] || "", R + 18, y);
+        schrift("normal", 8.5, D.grau);
+        doc.text(pdfText(datumLang(datum)), R + B, y, { align: "right" });
+        y += 4.6;
+        const kmT = abschnittKm(ab), rtT = gueltigeRoute(t);
+        const zeile = [streckeText(t), kmT >= 1 ? `${formatZahlCH(kmT)} km` : "", rtT ? MODUS_TEXT[rtT.modus] : ""].filter(Boolean).join("  ·  ");
+        if (zeile) { doc.text(doc.splitTextToSize(pdfText(zeile), B - 20)[0], R + 18, y); y += 4.6; }
+        // Sub-Routen (z.B. zu Fuss) dieses Abschnitts
+        const sr = ab.subs.filter(istSubRoute);
+        if (sr.length) {
+          schrift("normal", 8, D.grau);
+          const z2 = sr.map(e => `${nummern.get(e.id)} ${e.titel || ortAnzeige(e) || ""}: ${subRouteText(e)}`).join("   ·   ");
+          doc.splitTextToSize(pdfText(z2), B - 20).forEach(z => { platz(4.4); doc.text(z, R + 18, y); y += 4.2; });
+        }
+        y += 3.5;
+      }
+      y += 4;
+    };
     neueSeite();
     schrift("bold", 9, D.gold);
     doc.setCharSpace(1.2); doc.text("DIE ROUTE", R, y + 4); doc.setCharSpace(0);
@@ -3277,8 +3388,9 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(R, y, B, kh);
       y += kh + 4;
       schrift("normal", 7, D.grau);
-      doc.text(pdfText(`Stecknadel: Start · Zielfahne: Ziel · Gold: Tagesroute · Blau: Sub-Routen · Nummern: Sub-Einträge (Tag.Nr) · Karte ${KARTEN_QUELLE}`), R, y);
-      y += 10;
+      doc.text(pdfText(`Gold: Tagesrouten · Tag N: Anreise · Karte ${KARTEN_QUELLE}`), R, y);
+      y += 9;
+      if (anreisen.length) verlauf(anreisen);
     }
     // 02.11.2026: Bereiste Länder, je eine Karte mit dem Streckenverlauf im Land
     fortschritt && fortschritt("Länderkarten …");
@@ -3307,7 +3419,8 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         const merc = la => Math.log(Math.tan(Math.PI / 4 + la * Math.PI / 360));
         const [[s0, w0], [n0, e0]] = land.box;
         const verh = Math.max(0.5, Math.min(1.6, (merc(n0) - merc(s0)) / ((e0 - w0) * Math.PI / 180)));
-        const lk = await statischeKarte({ punkte, linien, rahmen, extra: [...land.box, ...rahmen.flatMap(x => x.box)], B: 1400, H: Math.round(1400 * verh), rand: 40, max: true, ohneLuftlinie: true });
+        const marken = lt.map(abschnittMarke).filter(Boolean);
+        const lk = await statischeKarte({ punkte, linien, rahmen, marken, extra: [...land.box, ...rahmen.flatMap(x => x.box)], B: 1400, H: Math.round(1400 * verh), rand: 40, max: true, ohneLuftlinie: true });
         const kmL = lt.reduce((sum, a) => sum + abschnittKm(a), 0);
         const nr = [...new Set(lt.map(a => tagNummer(a.datum)).filter(Boolean))];
         // Hohe Länder (z.B. Neuseeland, Chile) schmaler darstellen, max. 150 mm hoch
@@ -3326,36 +3439,14 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
           const kx = R + (B - kb) / 2;
           doc.addImage(lk.url, "JPEG", kx, y, kb, kh);
           doc.setDrawColor(...D.linie); doc.setLineWidth(0.3); doc.rect(kx, y, kb, kh);
-          y += kh + 9;
+          y += kh + 8;
         }
+        verlauf(lt);   // Zusammenfassung der Strecken in diesem Land
       }
     }
-    platz(24);
-    abschnitt("REISEVERLAUF");
-    y += 2;
-    for (const ab of tageMitEintraegen().flatMap(d => abschnitteAm(d))) {
-      const datum = ab.datum, t = ab.t;
-      platz(12);
-      doc.setDrawColor(...D.linie); doc.setLineWidth(0.2); doc.line(R, y - 4.2, R + B, y - 4.2);
-      schrift("bold", 10, D.gold);
-      doc.text(pdfText(tagLabel(datum)), R, y);
-      schrift("bold", 10, D.tinte);
-      doc.text(doc.splitTextToSize(pdfText((t && t.titel) || ""), B - 70)[0] || "", R + 18, y);
-      schrift("normal", 8.5, D.grau);
-      doc.text(pdfText(datumLang(datum)), R + B, y, { align: "right" });
-      y += 4.6;
-      const kmT = abschnittKm(ab);
-      const wegT = streckeText(t);
-      const rtT = gueltigeRoute(t);
-      const artT = t && kartenArtVon(t) === "anreise" ? "Anreise" : "";
-      if (wegT || kmT >= 1) {
-        schrift("normal", 8.5, D.grau);
-        const zeile = [artT, wegT, kmT >= 1 ? `${formatZahlCH(kmT)} km` : "", rtT ? MODUS_TEXT[rtT.modus] : ""].filter(Boolean).join("  ·  ");
-        doc.text(doc.splitTextToSize(pdfText(zeile), B - 20)[0], R + 18, y);
-        y += 4.6;
-      }
-      y += 4;   // 02.11.2026: ohne Auflistung der Sub-Einträge
-    }
+    // Abschnitte ohne Land/Kartenpunkt
+    const rest = alleAb.filter(ab => !gelistet.has(abKey(ab)));
+    if (rest.length) { platz(20); abschnitt("WEITERE ABSCHNITTE"); verlauf(rest); }
   }
 
   // ── Tage ──────────────────────────────────────────────────────────
@@ -3417,9 +3508,8 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
       doc.text(wegZ, R + 26, y);
       y += (wegZ.length - 1) * 4.6 + 4.8;
       schrift("normal", 9, D.grau);
-      const modusText = rt ? `${MODUS_TEXT[rt.modus] || ""}${rt.modus === "flug" || rt.modus === "schiff" ? " (Luftlinie)" : ""}` : "Luftlinie";
-      const dauer = rt && rt.min ? `   ·   ca. ${dauerText(rt.min)}` : "";
-      doc.text(pdfText(`${formatZahlCH(kmTag, kmTag < 10 ? 1 : 0)} km   ·   ${modusText}${dauer}`), R + 26, y);
+      const modusText = rt ? `${MODUS_TEXT[rt.modus] || ""}${LUFTLINIE_MODI.includes(rt.modus) ? " (Luftlinie)" : ""}` : "Luftlinie";
+      doc.text(pdfText(`${formatZahlCH(kmTag, kmTag < 10 ? 1 : 0)} km   ·   ${modusText}`), R + 26, y);   // 07.11.2026: ohne Zeitangaben
       y += 6.5;
       schrift("bold", 8, D.grau); doc.text("Stationen", R, y);
       if (!subs.length) { schrift("normal", 9, D.grau); doc.text("keine", R + 26, y); y += 5; }
@@ -3620,7 +3710,7 @@ function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
 // mehr auseinanderreissen. Alles geht mit einem Tippen raus.
 // ═════════════════════════════════════════════════════════════════════
 const PK = {
-  B: 1080, R: 60,
+  B: 1080, H: 1350, R: 60,   // 07.11.2026: alle Karten 1080 × 1350
   papier: "#fbfaf7", tinte: "#23262c", grau: "#7a7466", gold: "#d4a24e", linie: "#e6e0d3",
   dunkel: "#10141b", hell: "#e7e6e2",
   // 12.10.2026: durchgehend Arial, wie im PDF
@@ -3679,70 +3769,92 @@ function canvasZuDatei(c, name) {
   return new Promise(ok => c.toBlob(b => ok(new File([b], name, { type: "image/jpeg" })), "image/jpeg", 0.88));
 }
 
-// 22.10.2026: ALLE Fotos werden geteilt. Bis 6 Fotos auf der Karte mit dem
-// Text, weitere Fotos auf Folgekarten (je 6) mit Nummer und Titel.
-const FOTOS_PRO_KARTE = 6;
-function postkartenTeile(e) { return Math.max(1, Math.ceil(e.fotos.length / FOTOS_PRO_KARTE)); }
-async function erstellePostkarte(e, nr, datum, teil = 0) {
-  const teile = postkartenTeile(e);
-  const folge = teil > 0;   // Folgekarte: nur Kopf und Fotos
-  const { B, R } = PK, W = B - 2 * R;
+// 07.11.2026: Alle WhatsApp-Karten haben dasselbe Format (1080 × 1350) und
+// alle Fotos dieselbe Grösse (2 Spalten). Ohne Text passen 6 Fotos auf eine
+// Karte; mit Text so viele Reihen, wie Platz bleibt. Weitere Fotos kommen
+// auf Folgekarten (je 6) mit Nummer und Titel.
+const FOTO_LUFT = 16, FOTO_H = 300;
+const fotoB = () => (PK.B - 2 * PK.R - FOTO_LUFT) / 2;
+function postkartenKopf(e, nr, mitText) {
+  const W = PK.B - 2 * PK.R;
   const mess = document.createElement("canvas").getContext("2d");
   mess.font = `700 34px ${PK.sans}`;
   const pillB = Math.max(68, mess.measureText(String(nr)).width + 36);
   mess.font = `600 52px ${PK.sans}`;
-  const titelZ = umbrechen(mess, e.titel || ortAnzeige(e) || "Sub-Eintrag", W - pillB - 24);
-  mess.font = `34px ${PK.serif}`;
-  const textZ = folge ? [] : umbrechen(mess, e.text, W);
-  const zeigeOrt = !folge && !!subZeile(e);
+  const titelZ = umbrechen(mess, e.titel || ortAnzeige(e) || "Sub-Eintrag", W - pillB - 24).slice(0, 2);
+  let textGr = 34, textZ = [];
+  if (mitText && e.text) {
+    // Text passt sich an: notfalls kleinere Schrift, damit er auf die Karte passt
+    for (textGr = 34; textGr >= 26; textGr -= 2) {
+      mess.font = `${textGr}px ${PK.serif}`;
+      textZ = umbrechen(mess, e.text, W);
+      if (54 + titelZ.length * 62 + 4 + 50 + 20 + textZ.length * textGr * 1.47 <= PK.H - 2 * PK.R - 40) break;
+    }
+  }
+  const zeigeOrt = mitText !== null && !!subZeile(e);
+  const kopfH = 10 + 54 + titelZ.length * 62 + 4 + (zeigeOrt ? 50 : 0) + 20;
+  const textH = textZ.length ? textZ.length * Math.round(textGr * 1.47) + 30 : 0;
+  return { pillB, titelZ, textZ, textGr, zeigeOrt, kopfH, textH };
+}
+// Aufteilung der Fotos auf die Karten: [anzahl Karte 1, 6, 6, …]
+function postkartenPlan(e, nr) {
+  const k = postkartenKopf(e, nr, true);
+  const frei = PK.H - 2 * PK.R - k.kopfH - k.textH;
+  const reihen = Math.max(0, Math.min(3, Math.floor((frei + FOTO_LUFT) / (FOTO_H + FOTO_LUFT))));
+  const plan = [Math.min(e.fotos.length, reihen * 2)];
+  for (let rest = e.fotos.length - plan[0]; rest > 0; rest -= 6) plan.push(Math.min(6, rest));
+  return plan;
+}
+function postkartenTeile(e, nr = "") { return postkartenPlan(e, nr).length; }
+async function erstellePostkarte(e, nr, datum, teil = 0) {
+  const plan = postkartenPlan(e, nr);
+  const teile = plan.length;
+  const folge = teil > 0;   // Folgekarte: nur Kopf und Fotos
+  const { B, R } = PK, W = B - 2 * R;
+  const k = postkartenKopf(e, nr, !folge);
   const ortText = `${istSubRoute(e) ? MODUS_SYMBOL[(gueltigeRoute(e) || {}).modus || e.modus] || "📍" : "📍"} ${subZeile(e)}`;
-  const fotos = e.fotos.slice(teil * FOTOS_PRO_KARTE, (teil + 1) * FOTOS_PRO_KARTE);
+  const ab = plan.slice(0, teil).reduce((s2, n) => s2 + n, 0);
+  const fotos = e.fotos.slice(ab, ab + plan[teil]);
   const paare = (await Promise.all(fotos.map(async id => [id, await ladeFotoBild(id)]))).filter(p => p[1]);
-  const bilder = paare.map(p => p[1]);
-  const felder = collageFelder(bilder.length, W);
-  const collageH = bilder.length ? Math.max(...felder.map(f => f[1] + f[3])) : 0;
-
-  let H = R + 40 + 24 + titelZ.length * 62 + (zeigeOrt ? 50 : 0) + 20 + textZ.length * 50 + (bilder.length ? (textZ.length ? 40 : 10) + collageH : 0) + R;
+  const fw = fotoB();
+  const fotoH = Math.ceil(paare.length / 2) * (FOTO_H + FOTO_LUFT);
+  const H = Math.max(PK.H, R + k.kopfH + k.textH + fotoH + R);   // nur bei sehr langem Text höher
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
   g.fillStyle = PK.papier; g.fillRect(0, 0, B, H);
   g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
   let y = R + 10;
-  // Kopfzeile
   g.fillStyle = PK.grau; g.font = `600 26px ${PK.sans}`; g.textBaseline = "alphabetic";
   g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}${teile > 1 ? ` · Fotos ${teil + 1}/${teile}` : ""}`.toUpperCase(), R, y + 20);
   y += 54;
-  // Nummer + Titel
-  // Nummer als Pille, z.B. "3.1" (wie im PDF)
   g.beginPath();
-  g.roundRect ? g.roundRect(R, y - 8, pillB, 68, 34) : g.rect(R, y - 8, pillB, 68);
+  g.roundRect ? g.roundRect(R, y - 8, k.pillB, 68, 34) : g.rect(R, y - 8, k.pillB, 68);
   g.fillStyle = PK.gold; g.fill();
   g.fillStyle = PK.dunkel; g.font = `700 34px ${PK.sans}`; g.textAlign = "center";
-  g.fillText(String(nr), R + pillB / 2, y + 38);
+  g.fillText(String(nr), R + k.pillB / 2, y + 38);
   g.textAlign = "left"; g.fillStyle = PK.tinte; g.font = `600 52px ${PK.sans}`;
-  titelZ.forEach((z, i) => g.fillText(z, R + pillB + 24, y + 44 + i * 62));
-  y += titelZ.length * 62 + 4;
-  if (zeigeOrt) {
+  k.titelZ.forEach((z, i) => g.fillText(z, R + k.pillB + 24, y + 44 + i * 62));
+  y += k.titelZ.length * 62 + 4;
+  if (k.zeigeOrt) {
     g.fillStyle = istSubRoute(e) ? "#b57d1e" : PK.grau; g.font = `${istSubRoute(e) ? "600 " : ""}30px ${PK.sans}`;
     let t2 = ortText;
-    while (t2.length > 4 && g.measureText(t2).width > W - pillB - 24) t2 = t2.slice(0, -2) + "…";
-    g.fillText(t2, R + pillB + 24, y + 30); y += 50;
+    while (t2.length > 4 && g.measureText(t2).width > W - k.pillB - 24) t2 = t2.slice(0, -2) + "…";
+    g.fillText(t2, R + k.pillB + 24, y + 30); y += 50;
   }
   y += 20;
-  // Text
-  g.fillStyle = PK.tinte; g.font = `34px ${PK.serif}`;
-  textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
-  // Fotos
-  if (bilder.length) {
-    y += textZ.length ? 40 : 10;
-    bilder.forEach((bild, i) => {
-      const [fx, fy, fw, fh] = felder[i];
-      zeichneCover(g, bild, R + fx, y + fy, fw, fh);
-      zeichneBildunterschrift(g, fotoText(paare[i][0]), R + fx, y + fy, fw, fh, 26, 14);
-    });
-    y += collageH;
+  if (k.textZ.length) {
+    const zh = Math.round(k.textGr * 1.47);
+    g.fillStyle = PK.tinte; g.font = `${k.textGr}px ${PK.serif}`;
+    k.textZ.forEach(z => { g.fillText(z, R, y + k.textGr); y += zh; });
+    y += 30;
   }
+  // Fotos: alle gleich gross, 2 Spalten
+  paare.forEach(([id, bild], i) => {
+    const fx = R + (i % 2) * (fw + FOTO_LUFT), fy = y + Math.floor(i / 2) * (FOTO_H + FOTO_LUFT);
+    zeichneCover(g, bild, fx, fy, fw, FOTO_H);
+    zeichneBildunterschrift(g, fotoText(id), fx, fy, fw, FOTO_H, 26, 14);
+  });
   return c;   // ohne Fusszeile (12.10.2026)
 }
 
@@ -3753,44 +3865,36 @@ async function erstelleTitelkarte(datumOderAbschnitt) {
   const t = ab.t;
   const kmTag = abschnittKm(ab);
   const strecke = streckeText(t);
-  // 12.10.2026: kleiner Kartenausschnitt mit der Tagesroute oben rechts
-  const KW = 380, KH = 285, KX = B - R - KW, KY = R + 14;
-  let karte = null, gross = null;
-  const GH = Math.round(W * 0.66);   // Option Detailansicht: Karte über die ganze Breite
-  try {
-    const punkte = abschnittPunkte(ab);
-    if (punkte.length && t) {
-      const k = await abschnittKarte(ab, W, GH);
-      if (k) gross = await bildLaden(k.url);
-    } else if (punkte.length) {
-      const k = await statischeKarte({ punkte, B: 480, H: 360, rand: 46, linien: abschnittLinien(ab) });
-      if (k) karte = await bildLaden(k.url);
-    }
-  } catch { karte = null; gross = null; }
-  const textB = karte ? W - KW - 32 : W;   // Kopf und Titel laufen links neben der Karte
+  // 07.11.2026: festes Format 1080 × 1350; die Karte füllt den Platz
+  // zwischen Kopf und Text.
   const mess = document.createElement("canvas").getContext("2d");
   mess.font = `700 64px ${PK.sans}`;
-  const titelZ = umbrechen(mess, (t && t.titel) || tagLabel(datum), textB);
-  mess.font = `34px ${PK.serif}`;
-  const textZ = umbrechen(mess, t && t.text, W);
-  let yText = R + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30;
-  if (karte) yText = Math.max(yText, KY + KH + 34);
-  if (gross) yText += GH + 34;
-  const H = yText + textZ.length * 50 + R;
+  const titelZ = umbrechen(mess, (t && t.titel) || tagLabel(datum), W).slice(0, 2);
+  let textGr = 34, textZ = [];
+  for (textGr = 34; textGr >= 26; textGr -= 2) {
+    mess.font = `${textGr}px ${PK.serif}`;
+    textZ = umbrechen(mess, t && t.text, W);
+    if (textZ.length * textGr * 1.47 <= 420) break;
+  }
+  const zh = Math.round(textGr * 1.47);
+  const kopfH = 20 + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30;
+  const textH = textZ.length ? textZ.length * zh + 34 : 0;
+  const GH = Math.max(380, PK.H - 2 * R - kopfH - textH - 34);
+  let karte = null;
+  try {
+    const punkte = abschnittPunkte(ab);
+    if (punkte.length) {
+      const k = t ? await abschnittKarte(ab, W, GH) : await statischeKarte({ punkte, B: W, H: GH, rand: 60, linien: abschnittLinien(ab), max: true });
+      if (k) karte = await bildLaden(k.url);
+    }
+  } catch { karte = null; }
+  const H = Math.max(PK.H, R + kopfH + (karte ? GH + 34 : 0) + textH + R);
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
   g.fillStyle = PK.dunkel; g.fillRect(0, 0, B, H);
   g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
   let y = R + 20;
-  if (karte) {
-    g.save();
-    g.beginPath(); g.roundRect ? g.roundRect(KX, KY, KW, KH, 16) : g.rect(KX, KY, KW, KH); g.clip();
-    g.drawImage(karte, KX, KY, KW, KH);
-    g.restore();
-    g.beginPath(); g.roundRect ? g.roundRect(KX, KY, KW, KH, 16) : g.rect(KX, KY, KW, KH);
-    g.lineWidth = 3; g.strokeStyle = PK.gold; g.stroke();
-  }
   g.fillStyle = PK.gold; g.font = `600 28px ${PK.sans}`;
   g.fillText(`📖 ${reiseTitel()}`.toUpperCase(), R, y + 20);
   y += 60;
@@ -3800,27 +3904,26 @@ async function erstelleTitelkarte(datumOderAbschnitt) {
   g.fillStyle = PK.hell; g.font = `700 64px ${PK.sans}`;
   titelZ.forEach(z => { g.fillText(z, R, y + 54); y += 76; });
   if (strecke || kmTag >= 1) {
-    const zeile = `${kartenArtVon(t) === "anreise" ? "✈️ " : "🛣️ "}${[strecke, kmTag >= 1 ? `${formatZahlCH(kmTag)} km` : ""].filter(Boolean).join("  ·  ")}`;
-    const frei = y + 44 < KY + KH + 10 ? textB : W;   // neben der Karte schmaler
+    const zeile = `${MODUS_SYMBOL[(gueltigeRoute(t) || {}).modus] || (kartenArtVon(t) === "anreise" ? "✈️" : "🛣️")} ${[strecke, kmTag >= 1 ? `${formatZahlCH(kmTag)} km` : ""].filter(Boolean).join("  ·  ")}`;
     let gr = 34;
     g.font = `600 ${gr}px ${PK.sans}`;
-    while (gr > 22 && g.measureText(zeile).width > frei) { gr -= 2; g.font = `600 ${gr}px ${PK.sans}`; }
+    while (gr > 22 && g.measureText(zeile).width > W) { gr -= 2; g.font = `600 ${gr}px ${PK.sans}`; }
     g.fillStyle = PK.gold;
     g.fillText(zeile, R, y + 44);
     y += 64;
   }
-  y = karte ? Math.max(y + 30, KY + KH + 34) : y + 30;
-  if (gross) {
+  y += 30;
+  if (karte) {
     g.save();
     g.beginPath(); g.roundRect ? g.roundRect(R, y - 6, W, GH, 16) : g.rect(R, y - 6, W, GH); g.clip();
-    g.drawImage(gross, R, y - 6, W, GH);
+    g.drawImage(karte, R, y - 6, W, GH);
     g.restore();
     g.beginPath(); g.roundRect ? g.roundRect(R, y - 6, W, GH, 16) : g.rect(R, y - 6, W, GH);
     g.lineWidth = 3; g.strokeStyle = PK.gold; g.stroke();
     y += GH + 34;
   }
-  g.fillStyle = PK.hell; g.font = `34px ${PK.serif}`;
-  textZ.forEach(z => { g.fillText(z, R, y + 36); y += 50; });
+  g.fillStyle = PK.hell; g.font = `${textGr}px ${PK.serif}`;
+  textZ.forEach(z => { g.fillText(z, R, y + textGr); y += zh; });
   return c;   // ohne Fusszeile (12.10.2026)
 }
 
@@ -3862,7 +3965,7 @@ async function oeffneDialogTage(tage) {
       const subs = ab.subs;
       for (let i = 0; i < subs.length; i++) {
         dialogStatus(`Postkarte ${i + 1} von ${subs.length} (${tagLabel(datum)}) …`);
-        for (let teil = 0; teil < postkartenTeile(subs[i]); teil++) {
+        for (let teil = 0; teil < postkartenTeile(subs[i], nummern.get(subs[i].id)); teil++) {
           const kc = await erstellePostkarte(subs[i], nummern.get(subs[i].id), datum, teil);
           karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}${teil ? `-${teil + 1}` : ""}.jpg`));
         }
