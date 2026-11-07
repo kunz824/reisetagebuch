@@ -753,6 +753,18 @@
     background: var(--bg-panel-2);
   }
   #dialog .knopf-spalte > * { width: 100%; }
+  /* 08.11.2026: Auswahl für Kachel-Bericht (Tage, Zusammenfassung) */
+  .kachel-auswahl { display: flex; flex-direction: column; gap: 8px; }
+  .kachel-auswahl .schalter { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-panel-2); font-weight: 600; }
+  .kachel-auswahl .schalter small { display: block; font-weight: 400; opacity: .7; }
+  .kachel-auswahl .tage-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; }
+  .kachel-auswahl .tage-kopf button { width: auto; padding: 6px 12px; font-size: 13px; }
+  .kachel-auswahl .tage-liste { max-height: 38vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .kachel-auswahl .tage-liste label { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  .kachel-auswahl .tage-liste label:last-child { border-bottom: 0; }
+  .kachel-auswahl .tage-liste b { white-space: nowrap; }
+  .kachel-auswahl .tage-liste span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+  .kachel-auswahl input[type=checkbox] { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--accent, #d4a24e); }
 
   /* ── Fotoansicht ──────────────────────────────────────────────────── */
   #lightbox {
@@ -1043,12 +1055,12 @@
 
     <h2>Bericht</h2>
     <div class="knopf-drei" style="grid-template-columns:repeat(2, minmax(0, 1fr))">
-      <button type="button" class="btn-speichern" id="pdfBtn">📄 PDF</button>
-      <button type="button" class="btn-abbrechen" id="vorschauBtn">👁 Vorschau</button>
-      <button type="button" class="btn-abbrechen" id="druckBtn">🖨️ Drucken</button>
+      <button type="button" class="btn-speichern" id="vorschauBtn">👁 Vorschau</button>
+      <button type="button" class="btn-abbrechen" id="druckBtn">📄 Vorschau als PDF</button>
+      <button type="button" class="btn-abbrechen" id="kachelBtn">🗂 Kachel-Bericht</button>
       <button type="button" class="btn-abbrechen" id="sicherungBtn">💾 Speichern</button>
     </div>
-    <p class="hinweis" style="margin-top:8px">PDF: Reisebuch zum Sichern oder Senden. Vorschau: zeigt das PDF Seite für Seite. Drucken: druckt dieselben Seiten. Speichern: Sicherung als Datei (z.B. ins iCloud Drive).</p>
+    <p class="hinweis" style="margin-top:8px">Vorschau: zeigt das Reisebuch Seite für Seite. Vorschau als PDF: speichert genau diese Seiten als PDF (z.B. „In Dateien sichern“). Kachel-Bericht: Karten im WhatsApp-Design, Tage und Zusammenfassung wählbar, zum Teilen oder als PDF. Speichern: Sicherung als Datei (z.B. ins iCloud Drive).</p>
     <h2>Vorschau</h2>
     <div id="berichtDruck"></div>
 
@@ -1084,6 +1096,7 @@
   <div class="platte" role="dialog" aria-modal="true" aria-labelledby="dialogTitel">
     <h3 id="dialogTitel">Teilen</h3>
     <p class="hinweis" id="dialogStatus" style="white-space:pre-line"></p>
+    <div class="kachel-auswahl" id="dialogAuswahl" hidden></div>
     <div class="karten-vorschau" id="dialogVorschau" hidden></div>
     <div class="knopf-spalte" id="dialogKnoepfe"></div>
   </div>
@@ -1123,7 +1136,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "08.11.2026 · 00:15";
+const APP_VERSION = "08.11.2026 · 09:30";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1697,7 +1710,7 @@ function setzeAuswahlModus(an) {
 document.getElementById("auswahlBtn").addEventListener("click", () => setzeAuswahlModus(!auswahlModus));
 document.getElementById("teilenFertig").addEventListener("click", () => setzeAuswahlModus(false));
 document.getElementById("teilenStart").addEventListener("click", () => {
-  oeffneDialogTage([...ausgewaehlt].sort());
+  oeffneKachelDialog([...ausgewaehlt].sort());
 });
 document.getElementById("neuerEintragBtn").addEventListener("click", async () => {
   if (entwurfOffen()) { zeigeRegister("eintrag"); return; }   // angefangenen Eintrag nicht verlieren
@@ -3169,6 +3182,8 @@ async function zeigePdfVorschau() {
   ziel.replaceChildren(status);
   try {
     const blob = await erstellePdf(tageMitEintraegen(), true, t => { status.textContent = `Vorschau: ${t}`; }, reisebuchName());
+    // 08.11.2026: genau dieses PDF merken -> "Vorschau als PDF" speichert dieselben Seiten
+    vorschauPdf = { lauf, datei: new File([blob], `${reisebuchName()}.pdf`, { type: "application/pdf" }) };
     status.textContent = "Vorschau wird gezeichnet …";
     await ladePdfJs();
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
@@ -3200,13 +3215,31 @@ async function zeigePdfVorschau() {
 }
 document.getElementById("vorschauBtn").addEventListener("click", zeigePdfVorschau);
 
-// Drucken = die PDF-Seiten der Vorschau (gleich wie das PDF)
+// 08.11.2026: "Vorschau als PDF" = genau das PDF, das die Vorschau zeigt.
+// Ist die Vorschau aktuell, geht das Teilen-Menü sofort auf ("In Dateien
+// sichern", Drucken, Mail …). Sonst wird die Vorschau zuerst erstellt und
+// ein Knopf im Dialog gibt das PDF weiter (iOS verlangt dafür ein Tippen).
+let vorschauPdf = null;
+function vorschauAktuell() {
+  return vorschauPdf && vorschauPdf.lauf === berichtLauf && !berichtVeraltet && document.querySelector("#berichtDruck img.pdf-seite");
+}
 document.getElementById("druckBtn").addEventListener("click", async () => {
-  if (berichtVeraltet || !document.querySelector("#berichtDruck img.pdf-seite")) await zeigePdfVorschau();
-  const bilder = [...document.querySelectorAll("#berichtDruck img.pdf-seite")];
-  if (!bilder.length) return;
-  await Promise.all(bilder.map(img => (img.decode ? img.decode().catch(() => {}) : null)));
-  window.print();
+  if (vorschauAktuell()) { await teileDatei(vorschauPdf.datei, reiseTitel()); return; }
+  document.getElementById("dialogKnoepfe").innerHTML = "";
+  document.getElementById("dialogTitel").textContent = "Vorschau als PDF";
+  dialogStatus("Die Vorschau wird erstellt …");
+  dialogEl.hidden = false;
+  const knopf = dialogKnopf("📄 PDF sichern / teilen", "btn-speichern", async () => {
+    if (vorschauPdf) { const ok = await teileDatei(vorschauPdf.datei, reiseTitel()); if (ok) dialogStatus("PDF weitergegeben."); }
+  });
+  knopf.disabled = true;
+  dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+  await zeigePdfVorschau();
+  if (vorschauAktuell()) {
+    knopf.disabled = false;
+    knopf.textContent = `📄 PDF sichern / teilen (${formatZahlCH(vorschauPdf.datei.size / 1048576, 1)} MB)`;
+    dialogStatus(`Bereit: ${vorschauPdf.datei.name} – genau die Seiten der Vorschau. Zum Ablegen „In Dateien sichern“ wählen, zum Drucken „Drucken“.`);
+  } else dialogStatus("Die Vorschau konnte nicht erstellt werden.");
 });
 
 for (const [id, schluessel] of [["rTitel", "titel"], ["rUntertitel", "untertitel"], ["rStart", "start"], ["rEnde", "ende"], ["rSpeicherort", "speicherort"]]) {
@@ -3667,7 +3700,14 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
 // iOS erlaubt das Teilen-Menü nur direkt nach einem Tippen. Darum wird
 // zuerst alles vorbereitet und erst ein zweiter Knopf öffnet WhatsApp.
 const dialogEl = document.getElementById("dialog");
-function schliesseDialog() { dialogEl.hidden = true; }
+function schliesseDialog() {
+  dialogEl.hidden = true;
+  const v = document.getElementById("dialogVorschau");
+  v.querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src));
+  v.innerHTML = ""; v.hidden = true;
+  const a = document.getElementById("dialogAuswahl");
+  a.innerHTML = ""; a.hidden = true;
+}
 dialogEl.addEventListener("click", ev => { if (ev.target === dialogEl) schliesseDialog(); });
 
 function dialogKnopf(text, klasse, aktion) {
@@ -3704,13 +3744,19 @@ async function teileDatei(datei, titel) {
 
 // Text eines Eintrags für WhatsApp. Das Thema des Tages trägt den Tageskopf,
 // Sub-Themen sind mit ▸ markiert.
-function eintragWhatsapp(e, istThema, mitReisetitel) {
+function eintragWhatsapp(e, istThema, mitReisetitel, mitZus = false) {
   const z = [];
   if (mitReisetitel) z.push(`📖 *${reiseTitel()}*`, "");
   if (istThema) {
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);
     const zeile = streckeZeile(abschnittVon(e));
     if (zeile) z.push(`${kartenArtVon(e) === "anreise" ? "✈️" : "🛣️"} ${zeile}`);
+    if (mitZus) {   // 08.11.2026: Zusammenfassung wie in der Vorschau
+      const ab = abschnittVon(e), auf = kmNachModus([ab]);
+      const ges = auf.reduce((s2, x) => s2 + x.km, 0);
+      if (ges >= 1) z.push(`📏 Gesamt ${formatZahlCH(ges)} km${auf.length > 1 ? ` (${kmModusText(auf).replace(/ {3}· {3}/g, ", ")})` : ""}`);
+      if (ab.subs.length) z.push(`📍 ${ab.subs.length} Station${ab.subs.length === 1 ? "" : "en"}`);
+    }
   } else if (!themaAm(e.datum) && eintraegeAm(e.datum)[0].id === e.id) {
     z.push(`🗓 *${tagLabel(e.datum)} · ${datumLang(e.datum)}*`);   // Tag ohne Haupteintrag
   }
@@ -3722,37 +3768,19 @@ function eintragWhatsapp(e, istThema, mitReisetitel) {
   if (e.text) z.push(e.text);
   return z.join("\n").trim();
 }
-function whatsappText(tage, mitReisetitel = true) {
+function whatsappText(tage, mitReisetitel = true, mitZus = false) {
   const teile = [];
+  if (mitZus && tage.length) {
+    const abs = tage.flatMap(d => abschnitteAm(d)), auf = kmNachModus(abs);
+    const ges = auf.reduce((s2, x) => s2 + x.km, 0), st = abs.reduce((s2, a) => s2 + a.subs.length, 0);
+    teile.push([`📖 *${reiseTitel()}*`, `🧭 ${zeitraumText(tage)}`, `${tage.length} Tag${tage.length === 1 ? "" : "e"} · ${st} Stationen · ${formatZahlCH(ges)} km`,
+      auf.length ? `🚦 ${kmModusText(auf).replace(/ {3}· {3}/g, " · ")}` : ""].filter(Boolean).join("\n"));
+    mitReisetitel = false;
+  }
   tage.forEach((datum, ti) => eintraegeAm(datum).forEach((e, ei) => {
-    teile.push(eintragWhatsapp(e, istThema(e), mitReisetitel && ti === 0 && ei === 0));
+    teile.push(eintragWhatsapp(e, istThema(e), mitReisetitel && ti === 0 && ei === 0, mitZus));
   }));
   return teile.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
-function pdfKnopf(tage, mitDeckblatt, dateiBasis) {
-  let pdfDatei = null;
-  const knopf = dialogKnopf("📄 PDF erstellen", "btn-abbrechen", async () => {
-    if (pdfDatei) {
-      const ok = await teileDatei(pdfDatei, reiseTitel());
-      if (ok) dialogStatus("PDF weitergegeben.");
-      return;
-    }
-    knopf.disabled = true;
-    try {
-      const blob = await erstellePdf(tage, mitDeckblatt, t => { knopf.textContent = `📄 ${t}`; }, dateiBasis);
-      pdfDatei = new File([blob], `${dateiBasis}.pdf`, { type: "application/pdf" });
-      knopf.textContent = `📄 PDF teilen / sichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
-      knopf.className = "btn-speichern";
-      dialogStatus(`PDF ist bereit (${pdfDatei.name}). Zum Ablegen: „In Dateien sichern“ und den gewünschten Ordner wählen.`);
-    } catch (fehler) {
-      knopf.textContent = "📄 PDF erstellen";
-      dialogStatus(fehler.message || "Das PDF konnte nicht erstellt werden.");
-      console.error(fehler);
-    }
-    knopf.disabled = false;
-  });
-  return knopf;
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -3913,7 +3941,7 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   return c;   // ohne Fusszeile (12.10.2026)
 }
 
-async function erstelleTitelkarte(datumOderAbschnitt) {
+async function erstelleTitelkarte(datumOderAbschnitt, mitZus = false) {
   const ab = typeof datumOderAbschnitt === "string" ? abschnitteAm(datumOderAbschnitt)[0] : datumOderAbschnitt;
   const datum = ab.datum;
   const { B, R } = PK, W = B - 2 * R;
@@ -3929,12 +3957,19 @@ async function erstelleTitelkarte(datumOderAbschnitt) {
   for (textGr = 34; textGr >= 26; textGr -= 2) {
     mess.font = `${textGr}px ${PK.serif}`;
     textZ = umbrechen(mess, t && t.text, W);
-    if (textZ.length * textGr * 1.47 <= 420) break;
+    if (textZ.length * textGr * 1.47 <= (mitZus ? 300 : 420)) break;
   }
   const zh = Math.round(textGr * 1.47);
   const kopfH = 20 + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30;
   const textH = textZ.length ? textZ.length * zh + 34 : 0;
-  const GH = Math.max(380, PK.H - 2 * R - kopfH - textH - 34);
+  // 08.11.2026: Zusammenfassung wie in der Vorschau (Gesamt, Verkehrsmittel, Stationen)
+  const zus = mitZus && t ? zusammenfassungPlan(ab, W) : null;
+  if (zus) {
+    // so viele Stationen, dass die Karte mindestens 420 px hoch bleibt
+    while (zus.stationen.length > 3 && PK.H - 2 * R - kopfH - textH - 34 - zus.hoehe() < 420) { zus.stationen.pop(); zus.mehr++; }
+  }
+  const zusH = zus ? zus.hoehe() : 0;
+  const GH = Math.max(380, PK.H - 2 * R - kopfH - textH - zusH - 34);
   let karte = null;
   try {
     const punkte = abschnittPunkte(ab);
@@ -3943,7 +3978,7 @@ async function erstelleTitelkarte(datumOderAbschnitt) {
       if (k) karte = await bildLaden(k.url);
     }
   } catch { karte = null; }
-  const H = Math.max(PK.H, R + kopfH + (karte ? GH + 34 : 0) + textH + R);
+  const H = Math.max(PK.H, R + kopfH + (karte ? GH + 34 : 0) + zusH + textH + R);
   const c = document.createElement("canvas");
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
@@ -3977,103 +4012,461 @@ async function erstelleTitelkarte(datumOderAbschnitt) {
     g.lineWidth = 3; g.strokeStyle = PK.gold; g.stroke();
     y += GH + 34;
   }
+  if (zus) y = zeichneZusammenfassung(g, zus, R, y, W);
   g.fillStyle = PK.hell; g.font = `${textGr}px ${PK.serif}`;
   textZ.forEach(z => { g.fillText(z, R, y + textGr); y += zh; });
   return c;   // ohne Fusszeile (12.10.2026)
 }
 
-async function oeffneDialogTage(tage) {
-  const knoepfeEl = document.getElementById("dialogKnoepfe");
-  const vorschau = document.getElementById("dialogVorschau");
-  knoepfeEl.innerHTML = "";
-  vorschau.innerHTML = "";
-  vorschau.hidden = true;
-  document.getElementById("dialogTitel").textContent = tage.length === 1
-    ? `${tagLabel(tage[0])} teilen` : `${tage.length} Tage teilen`;
-  dialogStatus("Postkarten werden erstellt …");
-  dialogEl.hidden = false;
-
-  const alles = dialogKnopf("💬 Alles teilen (1 Tippen)", "btn-speichern", () => teileAlles());
-  alles.disabled = true;
-  const einzeln = dialogKnopf("Karte für Karte teilen", "btn-abbrechen", () => teileNaechste());
-  einzeln.disabled = true;
-  dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
-    const text = whatsappText(tage);
-    if (navigator.share) { try { await navigator.share({ text }); } catch { /* abgebrochen */ } }
-    else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+// ═════════════════════════════════════════════════════════════════════
+// 08.11.2026: Kachel-Bericht -- gleiche Karten wie für WhatsApp, inhaltlich
+// wie die Vorschau: wahlweise mit Zusammenfassung (Reiseübersicht,
+// Welt-/Länderkarten mit Streckenverlauf, je Haupteintrag Gesamt-km,
+// Verkehrsmittel und Stationen). Tage frei wählbar, Ausgabe als
+// WhatsApp-Karten oder als PDF (eine Karte pro Seite).
+// ═════════════════════════════════════════════════════════════════════
+function kuerze(g, text, max) {
+  let t = String(text || "");
+  if (g.measureText(t).width <= max) return t;
+  while (t.length > 1 && g.measureText(t + "…").width > max) t = t.slice(0, -1);
+  return t.trimEnd() + "…";
+}
+function zeichnePille(g, text, x, yMitte, gr = 24) {
+  g.font = `700 ${gr}px ${PK.sans}`;
+  const h = Math.round(gr * 1.55), w = Math.max(h + 6, g.measureText(text).width + gr * 1.1);
+  g.beginPath();
+  g.roundRect ? g.roundRect(x, yMitte - h / 2, w, h, h / 2) : g.rect(x, yMitte - h / 2, w, h);
+  g.fillStyle = PK.gold; g.fill();
+  g.fillStyle = PK.dunkel; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText(text, x + w / 2, yMitte + 1);
+  g.textAlign = "left"; g.textBaseline = "alphabetic";
+  return w;
+}
+function zusammenfassungPlan(ab, W) {
+  const t = ab.t;
+  const auf = kmNachModus([ab]);
+  const gesamt = auf.reduce((sum, x) => sum + x.km, 0);
+  const mess = document.createElement("canvas").getContext("2d");
+  mess.font = `26px ${PK.sans}`;
+  const aufZ = auf.length ? umbrechen(mess, kmModusText(auf).replace(/ {3}· {3}/g, "  ·  "), W - 190) : [];
+  const nummern = subNummern();
+  const stationen = ab.subs.map(e => ({ nr: nummern.get(e.id), text: `${e.titel || ortAnzeige(e) || "Sub-Eintrag"}${subZeile(e) ? `  (${subZeile(e)})` : ""}` }));
+  const plan = {
+    anreise: kartenArtVon(t) === "anreise", gesamt, aufZ, stationen, mehr: 0,
+    hoehe() { return 40 + 18 + 46 + this.aufZ.length * 36 + 14 + Math.max(1, this.stationen.length + (this.mehr ? 1 : 0)) * 46 + 26; },
+  };
+  return plan;
+}
+function zeichneZusammenfassung(g, z, x, y, W) {
+  g.textBaseline = "alphabetic";
+  g.fillStyle = PK.gold; g.font = `700 24px ${PK.sans}`;
+  g.fillText((z.anreise ? "ZUSAMMENFASSUNG ANREISE" : "ZUSAMMENFASSUNG TAGESROUTE").split("").join(String.fromCharCode(8202)), x, y + 24);
+  y += 40;
+  g.fillStyle = "#2c3340"; g.fillRect(x, y, W, 2);
+  y += 18;
+  const L = 190;
+  g.fillStyle = "#8b93a3"; g.font = `600 26px ${PK.sans}`; g.fillText("Gesamt", x, y + 30);
+  g.fillStyle = PK.hell; g.font = `700 32px ${PK.sans}`;
+  g.fillText(`${formatZahlCH(z.gesamt, z.gesamt < 10 ? 1 : 0)} km`, x + L, y + 30);
+  y += 46;
+  g.fillStyle = "#a9b0bd"; g.font = `26px ${PK.sans}`;
+  z.aufZ.forEach(zl => { g.fillText(zl, x + L, y + 26); y += 36; });
+  y += 14;
+  g.fillStyle = "#8b93a3"; g.font = `600 26px ${PK.sans}`; g.fillText("Stationen", x, y + 30);
+  if (!z.stationen.length) { g.fillStyle = "#a9b0bd"; g.font = `26px ${PK.sans}`; g.fillText("keine", x + L, y + 30); y += 46; }
+  for (const st of z.stationen) {
+    const pw = zeichnePille(g, st.nr, x + L, y + 21, 22);
+    g.fillStyle = PK.hell; g.font = `28px ${PK.sans}`;
+    g.fillText(kuerze(g, st.text, W - L - pw - 16), x + L + pw + 14, y + 31);
+    y += 46;
+  }
+  if (z.mehr) { g.fillStyle = "#8b93a3"; g.font = `italic 26px ${PK.sans}`; g.fillText(`+ ${z.mehr} weitere Station${z.mehr === 1 ? "" : "en"}`, x + L, y + 30); y += 46; }
+  return y + 26;
+}
+// Kopf der dunklen Übersichtskarten
+function kachelKopf(g, label, titel, info) {
+  const { B, R } = PK, W = B - 2 * R;
+  g.fillStyle = PK.dunkel; g.fillRect(0, 0, B, g.canvas.height);
+  g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
+  let y = R + 20;
+  g.fillStyle = PK.gold; g.font = `600 28px ${PK.sans}`;
+  g.fillText(kuerze(g, `📖 ${reiseTitel()}`.toUpperCase(), W), R, y + 20);
+  y += 60;
+  g.fillStyle = "#8b93a3"; g.font = `600 26px ${PK.sans}`;
+  g.fillText(label, R, y + 22);
+  y += 46;
+  g.fillStyle = PK.hell; g.font = `700 60px ${PK.sans}`;
+  g.fillText(kuerze(g, titel, W), R, y + 52);
+  y += 76;
+  if (info) { g.fillStyle = PK.gold; g.font = `600 30px ${PK.sans}`; g.fillText(kuerze(g, info, W), R, y + 32); y += 52; }
+  return y + 20;
+}
+const KACHEL_KOPF_H = PK.R + 20 + 60 + 46 + 76 + 52 + 20;
+// Reiseverlauf-Zeilen unter einer Karte (Tag, Titel, Strecke, Distanz)
+function verlaufZeilen(liste) {
+  return liste.map(ab => {
+    const t = ab.t, kmT = abschnittGesamtKm(ab), rtT = gueltigeRoute(t);
+    return {
+      tag: tagNummer(ab.datum) ? `Tag ${tagNummer(ab.datum)}` : tagLabel(ab.datum),
+      titel: (t && t.titel) || "", datum: datumKurz(ab.datum),
+      zeile: [streckeText(t), kmT >= 1 ? `${formatZahlCH(kmT)} km` : "", rtT ? MODUS_TEXT[rtT.modus] : ""].filter(Boolean).join("  ·  "),
+    };
   });
-  pdfKnopf(tage, false, `${dateiName(reiseTitel())}-${tage.length === 1 ? dateiName(tagLabel(tage[0])) : tage.length + "-tage"}`);
-  dialogKnopf("Schliessen", "btn-abbrechen", () => {
-    vorschau.querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src));
-    schliesseDialog();
+}
+function zeichneVerlauf(g, zeilen, x, y, W, kompakt, mehr) {
+  const TB = 130;
+  for (const z of zeilen) {
+    g.fillStyle = "#2c3340"; g.fillRect(x, y, W, 2);
+    y += 2;
+    g.fillStyle = PK.gold; g.font = `700 30px ${PK.sans}`; g.fillText(z.tag, x, y + 38);
+    g.fillStyle = "#8b93a3"; g.font = `24px ${PK.sans}`; g.textAlign = "right"; g.fillText(z.datum, x + W, y + 38); g.textAlign = "left";
+    g.fillStyle = PK.hell; g.font = `600 30px ${PK.sans}`;
+    if (kompakt) {
+      const km2 = z.zeile.match(/[\d'’.,]+ km/);
+      g.fillText(kuerze(g, [z.titel || z.zeile, km2 ? km2[0] : ""].filter(Boolean).join("  ·  "), W - TB - 100), x + TB, y + 38);
+      y += 54;
+    } else {
+      g.fillText(kuerze(g, z.titel || z.zeile, W - TB - 100), x + TB, y + 38);
+      if (z.titel && z.zeile) { g.fillStyle = "#a9b0bd"; g.font = `26px ${PK.sans}`; g.fillText(kuerze(g, z.zeile, W - TB), x + TB, y + 76); y += 92; }
+      else y += 56;
+    }
+  }
+  if (mehr) { g.fillStyle = "#8b93a3"; g.font = `italic 26px ${PK.sans}`; g.fillText(`+ ${mehr} weitere Abschnitt${mehr === 1 ? "" : "e"}`, x + TB, y + 36); y += 54; }
+  return y;
+}
+function verlaufHoehe(zeilen, kompakt, mehr) {
+  return zeilen.reduce((h, z) => h + (kompakt ? 56 : (z.titel && z.zeile ? 94 : 58)), 0) + (mehr ? 54 : 0);
+}
+// Karte + Verlauf auf eine Kachel; die Karte bekommt den restlichen Platz
+async function erstelleVerlaufskachel(label, titel, info, kartenOpt, liste) {
+  const { B, R } = PK, W = B - 2 * R;
+  let zeilen = verlaufZeilen(liste), kompakt = false, mehr = 0;
+  const frei = () => PK.H - KACHEL_KOPF_H - R - 34 - verlaufHoehe(zeilen, kompakt, mehr);
+  if (frei() < 560) kompakt = true;
+  while (frei() < 520 && zeilen.length > 1) { zeilen = zeilen.slice(0, -1); mehr++; }
+  const GH = Math.max(420, Math.round(frei()));
+  let karte = null;
+  try {
+    const k = await statischeKarte({ ...kartenOpt, B: W, H: GH });
+    if (k) karte = await bildLaden(k.url);
+  } catch { karte = null; }
+  const c = document.createElement("canvas");
+  c.width = B; c.height = PK.H;
+  const g = c.getContext("2d");
+  let y = kachelKopf(g, label, titel, info);
+  if (karte) {
+    g.save();
+    g.beginPath(); g.roundRect ? g.roundRect(R, y, W, GH, 16) : g.rect(R, y, W, GH); g.clip();
+    g.drawImage(karte, R, y, W, GH);
+    g.restore();
+    g.beginPath(); g.roundRect ? g.roundRect(R, y, W, GH, 16) : g.rect(R, y, W, GH);
+    g.lineWidth = 3; g.strokeStyle = PK.gold; g.stroke();
+    y += GH + 34;
+  }
+  zeichneVerlauf(g, zeilen, R, y, W, kompakt, mehr);
+  return c;
+}
+function zeitraumText(tage) {
+  if (!tage.length) return "";
+  const a = tage[0], e = tage[tage.length - 1];
+  const na = tagNummer(a), ne = tagNummer(e);
+  const tg = na && ne ? (na === ne ? `Tag ${na}` : `Tag ${na}–${ne}`) : "";
+  return [tg, a === e ? datumLang(a) : `${datumKurz(a)} – ${datumLang(e)}`].filter(Boolean).join("  ·  ");
+}
+// Übersicht (wie Titelseite der Vorschau): Titelfotos, Kennzahlen, km nach Verkehrsmittel
+async function erstelleUebersichtskarte(tage, abs) {
+  const { B, R } = PK, W = B - 2 * R;
+  const c = document.createElement("canvas");
+  c.width = B; c.height = PK.H;
+  const g = c.getContext("2d");
+  g.fillStyle = PK.dunkel; g.fillRect(0, 0, B, PK.H);
+  const fotoH = 640;
+  const eigene = new Set(abs.flatMap(a => [...(a.t ? a.t.fotos : []), ...a.subs.flatMap(e => e.fotos)]));
+  let ids = (daten.titelFotos || []).filter(id => eigene.has(id)).slice(0, 4);
+  if (!ids.length) ids = [...eigene].slice(0, 1);
+  const bilder = (await Promise.all(ids.map(ladeFotoBild))).filter(Boolean);
+  const L = 6, n = bilder.length;
+  const felder = n === 1 ? [[0, 0, B, fotoH]]
+    : n === 2 ? [[0, 0, (B - L) / 2, fotoH], [(B + L) / 2, 0, (B - L) / 2, fotoH]]
+    : n === 3 ? [[0, 0, B * 0.62, fotoH], [B * 0.62 + L, 0, B * 0.38 - L, (fotoH - L) / 2], [B * 0.62 + L, (fotoH + L) / 2, B * 0.38 - L, (fotoH - L) / 2]]
+    : [[0, 0, (B - L) / 2, (fotoH - L) / 2], [(B + L) / 2, 0, (B - L) / 2, (fotoH - L) / 2], [0, (fotoH + L) / 2, (B - L) / 2, (fotoH - L) / 2], [(B + L) / 2, (fotoH + L) / 2, (B - L) / 2, (fotoH - L) / 2]];
+  bilder.forEach((b, i) => zeichneCover(g, b, ...felder[i], 0));
+  const verlauf = g.createLinearGradient(0, fotoH - 360, 0, fotoH);
+  verlauf.addColorStop(0, "rgba(16,20,27,0)"); verlauf.addColorStop(1, "rgba(16,20,27,0.96)");
+  g.fillStyle = verlauf; g.fillRect(0, fotoH - 360, B, 360);
+  g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
+  g.fillStyle = PK.gold; g.font = `700 26px ${PK.sans}`;
+  g.fillText("REISETAGEBUCH".split("").join(String.fromCharCode(8202)), R, fotoH - 190);
+  g.fillStyle = "#ffffff"; g.font = `700 72px ${PK.sans}`;
+  const tz = umbrechen(g, reiseTitel(), W).slice(0, 2);
+  tz.forEach((z, i) => g.fillText(z, R, fotoH - 110 - (tz.length - 1 - i) * 80));
+  g.fillStyle = "#e6e2d8"; g.font = `30px ${PK.sans}`;
+  g.fillText(kuerze(g, daten.reise.untertitel || "", W), R, fotoH - 62);
+  g.fillStyle = "#c8c4bc"; g.font = `26px ${PK.sans}`;
+  g.fillText(zeitraumText(tage), R, fotoH - 22);
+  g.fillStyle = PK.gold; g.fillRect(0, fotoH, B, 6);
+  const auf = kmNachModus(abs);
+  const kmGesamt = auf.reduce((sum, x) => sum + x.km, 0);
+  const fakten = [[tage.length, "Tage"], [abs.reduce((sum, a) => sum + a.subs.length, 0), "Stationen"], [formatZahlCH(kmGesamt), "Kilometer"], [eigene.size, "Fotos"]];
+  let y = fotoH + 60;
+  fakten.forEach(([wert, text], i) => {
+    const x = R + i * (W / 4);
+    g.fillStyle = PK.gold; g.font = `700 64px ${PK.sans}`; g.fillText(String(wert), x, y + 60);
+    g.fillStyle = "#8b93a3"; g.font = `600 22px ${PK.sans}`; g.fillText(text.toUpperCase(), x, y + 98);
   });
-
-  // Karten erzeugen: je Tag Titelkarte + eine Postkarte pro Sub-Thema
+  y += 150;
+  if (auf.length) {
+    g.fillStyle = "#2c3340"; g.fillRect(R, y, W, 2);
+    y += 24;
+    g.fillStyle = "#8b93a3"; g.font = `700 22px ${PK.sans}`;
+    g.fillText("KILOMETER NACH VERKEHRSMITTEL".split("").join(String.fromCharCode(8202)), R, y + 22);
+    y += 50;
+    const sp = W / 2;
+    auf.slice(0, 8).forEach((x2, i) => {
+      const xx = R + (i % 2) * sp, yy = y + Math.floor(i / 2) * 54;
+      g.fillStyle = PK.hell; g.font = `600 30px ${PK.sans}`;
+      g.fillText(`${x2.modus === "ohne" ? "📍" : MODUS_SYMBOL[x2.modus] || ""} ${x2.modus === "ohne" ? "ohne Planung" : MODUS_TEXT[x2.modus]}`, xx, yy + 32);
+      g.fillStyle = PK.gold; g.textAlign = "right";
+      g.fillText(`${formatZahlCH(x2.km, x2.km < 10 ? 1 : 0)} km`, xx + sp - 40, yy + 32);
+      g.textAlign = "left";
+    });
+    y += Math.ceil(Math.min(8, auf.length) / 2) * 54 + 10;
+  }
+  // Reiseverlauf der gewählten Abschnitte (kompakt), so weit Platz ist
+  let zeilen = verlaufZeilen(abs), mehr = 0;
+  const platzV = PK.H - R - y - 74;
+  while (zeilen.length && verlaufHoehe(zeilen, true, mehr) > platzV) { zeilen = zeilen.slice(0, -1); mehr++; }
+  if (zeilen.length) {
+    g.fillStyle = "#2c3340"; g.fillRect(R, y, W, 2);
+    y += 24;
+    g.fillStyle = "#8b93a3"; g.font = `700 22px ${PK.sans}`;
+    g.fillText("REISEVERLAUF".split("").join(String.fromCharCode(8202)), R, y + 22);
+    y += 44;
+    zeichneVerlauf(g, zeilen, R, y, W, true, mehr);
+  }
+  return c;
+}
+// Welt- und Länderkarten wie auf der Routenseite der Vorschau
+async function erstelleRoutenkacheln(abs, status) {
   const karten = [];
   const nummern = subNummern();
-  try {
-    for (const ab of tage.flatMap(d => abschnitteAm(d))) {
-      const datum = ab.datum;
-      const tagNr = String(tagNummer(datum) || 0).padStart(2, "0");
-      const titel = await erstelleTitelkarte(ab);
-      karten.push(await canvasZuDatei(titel, `tag${tagNr}-0-${ab.t ? ab.t.id : "tag"}.jpg`));
-      const subs = ab.subs;
-      for (let i = 0; i < subs.length; i++) {
-        dialogStatus(`Postkarte ${i + 1} von ${subs.length} (${tagLabel(datum)}) …`);
-        for (let teil = 0; teil < postkartenTeile(subs[i], nummern.get(subs[i].id)); teil++) {
-          const kc = await erstellePostkarte(subs[i], nummern.get(subs[i].id), datum, teil);
-          karten.push(await canvasZuDatei(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}${teil ? `-${teil + 1}` : ""}.jpg`));
+  const anreisen = abs.filter(a => a.t && kartenArtVon(a.t) === "anreise");
+  if (anreisen.length) {
+    status && status("Weltkarte …");
+    karten.push(await erstelleVerlaufskachel("WELTKARTE  ·  STRECKENVERLAUF", "Anreise",
+      `${anreisen.length} Abschnitt${anreisen.length === 1 ? "" : "e"}  ·  ${formatZahlCH(anreisen.reduce((s2, a) => s2 + abschnittGesamtKm(a), 0))} km`,
+      { punkte: [], linien: anreisen.flatMap(a => abschnittVerlauf(a).linien), extra: WELT.box, marken: anreisen.map(abschnittMarke).filter(Boolean), rand: 16, max: true, ohneLuftlinie: true },
+      anreisen));
+  }
+  status && status("Länderkarten …");
+  const laender = new Map();
+  const ohneLand = [];
+  for (const a of abs) {
+    if (kartenArtVon(a.t) === "anreise") continue;
+    let land = null;
+    try { land = await landFuer(a); } catch { land = null; }
+    if (!land) { ohneLand.push(a); continue; }
+    const code = Object.keys(daten.laender || {}).find(cd => daten.laender[cd] === land) || land.name;
+    if (!laender.has(code)) laender.set(code, { land, tage: [] });
+    laender.get(code).tage.push(a);
+  }
+  for (const { land, tage: lt } of laender.values()) {
+    const rahmen = lt.map(a => {
+      const ps = [...abschnittPunkte(a, nummern).map(q => [q.lat, q.lon]), ...abschnittLinien(a).flatMap(l => l.punkte)];
+      if (!ps.length) return null;
+      const la = ps.map(q => q[0]), lo = ps.map(q => q[1]);
+      return { label: tagNummer(a.datum) ? `Tag ${tagNummer(a.datum)}` : tagLabel(a.datum), box: [[Math.min(...la), Math.min(...lo)], [Math.max(...la), Math.max(...lo)]] };
+    }).filter(Boolean);
+    const nTage = new Set(lt.map(a => a.datum)).size;
+    const nr = [...new Set(lt.map(a => tagNummer(a.datum)).filter(Boolean))];
+    const info = `${nTage} Tag${nTage === 1 ? "" : "e"}${nr.length ? ` (Tag ${nr[0]}${nr.length > 1 ? `–${nr[nr.length - 1]}` : ""})` : ""}  ·  ${formatZahlCH(lt.reduce((s2, a) => s2 + abschnittGesamtKm(a), 0))} km`;
+    karten.push(await erstelleVerlaufskachel(laender.size === 1 ? "BEREISTES LAND  ·  STRECKENVERLAUF" : "BEREISTE LÄNDER  ·  STRECKENVERLAUF", land.name, info, {
+      punkte: lt.flatMap(a => abschnittVerlauf(a).punkte), linien: lt.flatMap(a => abschnittVerlauf(a).linien),
+      rahmen, marken: lt.map(abschnittMarke).filter(Boolean), extra: [...land.box, ...rahmen.flatMap(x => x.box)],
+      rand: 40, max: true, ohneLuftlinie: true,
+    }, lt));
+  }
+  return karten;
+}
+// Kacheln als PDF: eine Karte pro Seite, Seitengrösse = Kartenformat
+async function kachelPdf(karten, masse, status) {
+  await ladeJsPdf();
+  const { jsPDF } = window.jspdf;
+  let doc = null;
+  for (let i = 0; i < karten.length; i++) {
+    status && status(`Seite ${i + 1} von ${karten.length} …`);
+    const [bw, bh] = masse[i];
+    const w = 540, h = Math.round(540 * bh / bw);
+    const lage = h >= w ? "portrait" : "landscape";
+    if (!doc) doc = new jsPDF({ unit: "pt", format: [w, h], orientation: lage, compress: true });
+    else doc.addPage([w, h], lage);
+    doc.addImage(new Uint8Array(await karten[i].arrayBuffer()), "JPEG", 0, 0, w, h);
+  }
+  return doc.output("blob");
+}
+
+let kachelMitZus = (() => { try { return localStorage.getItem("rt_kachel_zus") !== "0"; } catch { return true; } })();
+function oeffneKachelDialog(vorauswahl) {
+  const alleTage = tageMitEintraegen();
+  const gewaehlt = new Set((vorauswahl && vorauswahl.length ? vorauswahl : alleTage).filter(d => alleTage.includes(d)));
+  const knoepfeEl = document.getElementById("dialogKnoepfe");
+  const vorschau = document.getElementById("dialogVorschau");
+  const auswahl = document.getElementById("dialogAuswahl");
+  const titel = document.getElementById("dialogTitel");
+  vorschau.innerHTML = ""; vorschau.hidden = true;
+  dialogEl.hidden = false;
+
+  function zeigeAuswahl() {
+    vorschau.querySelectorAll("img").forEach(i => URL.revokeObjectURL(i.src));
+    vorschau.innerHTML = ""; vorschau.hidden = true;
+    knoepfeEl.innerHTML = "";
+    titel.textContent = "Kachel-Bericht";
+    auswahl.innerHTML = "";
+    auswahl.hidden = false;
+    const schalter = document.createElement("label");
+    schalter.className = "schalter";
+    schalter.innerHTML = `<input type="checkbox"><div>Mit Zusammenfassung<small>Reiseübersicht, Welt-/Länderkarten mit Streckenverlauf, je Haupteintrag Gesamt-km, Verkehrsmittel und Stationen – wie in der Vorschau</small></div>`;
+    const sw = schalter.querySelector("input");
+    sw.checked = kachelMitZus;
+    sw.addEventListener("change", () => { kachelMitZus = sw.checked; try { localStorage.setItem("rt_kachel_zus", sw.checked ? "1" : "0"); } catch { /* egal */ } });
+    const kopf = document.createElement("div");
+    kopf.className = "tage-kopf";
+    const zaehler = document.createElement("span");
+    const alle = document.createElement("button"); alle.type = "button"; alle.className = "btn-abbrechen"; alle.textContent = "Alle";
+    const keine = document.createElement("button"); keine.type = "button"; keine.className = "btn-abbrechen"; keine.textContent = "Keine";
+    const kn = document.createElement("div"); kn.style.cssText = "display:flex;gap:6px"; kn.append(alle, keine);
+    kopf.append(zaehler, kn);
+    const liste = document.createElement("div");
+    liste.className = "tage-liste";
+    const boxen = alleTage.map(d => {
+      const l = document.createElement("label");
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = gewaehlt.has(d);
+      cb.addEventListener("change", () => { cb.checked ? gewaehlt.add(d) : gewaehlt.delete(d); aktualisiere(); });
+      const b = document.createElement("b"); b.textContent = `${tagLabel(d)} · ${datumKurz(d)}`;
+      const sp = document.createElement("span"); sp.textContent = themenAm(d).map(t => t.titel).filter(Boolean).join(" · ") || (eintraegeAm(d)[0] || {}).titel || "";
+      l.append(cb, b, sp);
+      liste.appendChild(l);
+      return [d, cb];
+    });
+    alle.addEventListener("click", () => { boxen.forEach(([d, cb]) => { cb.checked = true; gewaehlt.add(d); }); aktualisiere(); });
+    keine.addEventListener("click", () => { boxen.forEach(([d, cb]) => { cb.checked = false; gewaehlt.delete(d); }); aktualisiere(); });
+    auswahl.append(schalter, kopf, liste);
+    const los = dialogKnopf("🗂 Karten erstellen", "btn-speichern", () => erzeuge());
+    dialogKnopf("💬 Nur Text", "btn-abbrechen", async () => {
+      const text = whatsappText([...gewaehlt].sort(), true, kachelMitZus);
+      if (navigator.share) { try { await navigator.share({ text }); } catch { /* abgebrochen */ } }
+      else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    });
+    dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+    function aktualisiere() {
+      const n = gewaehlt.size;
+      zaehler.textContent = `${n} von ${alleTage.length} Tag${alleTage.length === 1 ? "" : "en"}`;
+      los.disabled = n === 0;
+      knoepfeEl.querySelectorAll("button")[1].disabled = n === 0;
+    }
+    aktualisiere();
+    dialogStatus("Tage wählen und festlegen, ob die Zusammenfassung dazugehört. Danach die Karten erstellen – zum Teilen per WhatsApp oder als PDF.");
+  }
+
+  async function erzeuge() {
+    const tage = [...gewaehlt].sort();
+    const mitZus = kachelMitZus;
+    auswahl.hidden = true;
+    knoepfeEl.innerHTML = "";
+    titel.textContent = tage.length === 1 ? `${tagLabel(tage[0])} · Kacheln` : `${tage.length} Tage · Kacheln`;
+    dialogStatus("Karten werden erstellt …");
+    const alles = dialogKnopf("💬 Alles teilen (1 Tippen)", "btn-speichern", () => teileAlles());
+    alles.disabled = true;
+    const einzeln = dialogKnopf("Karte für Karte teilen", "btn-abbrechen", () => teileNaechste());
+    einzeln.disabled = true;
+    let pdfDatei = null;
+    const basis = `${dateiName(reiseTitel())}-kacheln-${tage.length === alleTage.length ? "alle" : tage.length === 1 ? dateiName(tagLabel(tage[0])) : tage.length + "-tage"}`;
+    const pdfK = dialogKnopf("📄 Kachel-PDF erstellen", "btn-abbrechen", async () => {
+      if (pdfDatei) { const ok = await teileDatei(pdfDatei, reiseTitel()); if (ok) dialogStatus("PDF weitergegeben."); return; }
+      pdfK.disabled = true;
+      try {
+        const blob = await kachelPdf(karten, masse, t => { pdfK.textContent = `📄 ${t}`; });
+        pdfDatei = new File([blob], `${basis}.pdf`, { type: "application/pdf" });
+        pdfK.textContent = `📄 Kachel-PDF teilen / sichern (${formatZahlCH(blob.size / 1048576, 1)} MB)`;
+        pdfK.className = "btn-speichern";
+        dialogStatus(`PDF ist bereit (${pdfDatei.name}, ${karten.length} Seiten). Zum Ablegen „In Dateien sichern“ wählen.`);
+      } catch (fehler) {
+        pdfK.textContent = "📄 Kachel-PDF erstellen";
+        dialogStatus(fehler.message || "Das PDF konnte nicht erstellt werden.");
+        console.error(fehler);
+      }
+      pdfK.disabled = false;
+    });
+    pdfK.disabled = true;
+    dialogKnopf("◀ Auswahl ändern", "btn-abbrechen", zeigeAuswahl);
+    dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+
+    const karten = [], masse = [];
+    const dazu = async (c, name) => { masse.push([c.width, c.height]); karten.push(await canvasZuDatei(c, name)); };
+    const nummern = subNummern();
+    const abs = tage.flatMap(d => abschnitteAm(d));
+    try {
+      if (mitZus) {
+        dialogStatus("Reiseübersicht …");
+        await dazu(await erstelleUebersichtskarte(tage, abs), "00-uebersicht.jpg");
+        let i = 0;
+        for (const c of await erstelleRoutenkacheln(abs, dialogStatus)) await dazu(c, `00-route-${++i}.jpg`);
+      }
+      for (const ab of abs) {
+        const datum = ab.datum;
+        const tagNr = String(tagNummer(datum) || 0).padStart(2, "0");
+        dialogStatus(`Titelkarte ${tagLabel(datum)} …`);
+        await dazu(await erstelleTitelkarte(ab, mitZus), `tag${tagNr}-0-${ab.t ? ab.t.id : "tag"}.jpg`);
+        const subs = ab.subs;
+        for (let i = 0; i < subs.length; i++) {
+          dialogStatus(`Postkarte ${i + 1} von ${subs.length} (${tagLabel(datum)}) …`);
+          for (let teil = 0; teil < postkartenTeile(subs[i], nummern.get(subs[i].id)); teil++) {
+            const kc = await erstellePostkarte(subs[i], nummern.get(subs[i].id), datum, teil);
+            await dazu(kc, `tag${tagNr}-${String(i + 1).padStart(2, "0")}-nr${nummern.get(subs[i].id)}${teil ? `-${teil + 1}` : ""}.jpg`);
+          }
         }
       }
-    }
-  } catch (fehler) {
-    console.error(fehler);
-    dialogStatus("Die Postkarten konnten nicht erstellt werden. Nur Text oder PDF nutzen.");
-    return;
-  }
-  for (const k of karten) {
-    const img = document.createElement("img");
-    img.src = URL.createObjectURL(k);
-    img.alt = k.name;
-    vorschau.appendChild(img);
-  }
-  vorschau.hidden = false;
-  alles.disabled = false;
-  einzeln.disabled = false;
-  alles.textContent = `💬 Alles teilen · ${karten.length} Karte${karten.length === 1 ? "" : "n"} (1 Tippen)`;
-  dialogStatus("Bereit. „Alles teilen“ schickt Tagesziel und alle Postkarten auf einmal. Wichtig ist dir die genaue Reihenfolge? Dann „Karte für Karte“.");
-
-  async function teileAlles() {
-    if (!(navigator.canShare && navigator.canShare({ files: karten }))) {
-      dialogStatus("Dieses Gerät kann keine Bilder teilen. PDF oder Nur Text nutzen.");
+    } catch (fehler) {
+      console.error(fehler);
+      dialogStatus("Die Karten konnten nicht erstellt werden. „Auswahl ändern“ → Nur Text nutzen.");
       return;
     }
-    try { await navigator.share({ files: karten }); dialogStatus("Geteilt."); }
-    catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. Karte für Karte versuchen."); }
-  }
-  let pos = 0;
-  async function teileNaechste() {
-    if (pos >= karten.length) return;
-    try {
-      await navigator.share({ files: [karten[pos]] });
-      pos++;
-      einzeln.textContent = pos >= karten.length ? "✓ Alle Karten geteilt" : `Nächste Karte teilen (${pos + 1} von ${karten.length})`;
-      einzeln.disabled = pos >= karten.length;
-    } catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt."); }
-  }
-}
+    if (dialogEl.hidden) return;
+    for (const k of karten) {
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(k);
+      img.alt = k.name;
+      vorschau.appendChild(img);
+    }
+    vorschau.hidden = false;
+    alles.disabled = false;
+    einzeln.disabled = false;
+    pdfK.disabled = false;
+    alles.textContent = `💬 Alles teilen · ${karten.length} Karte${karten.length === 1 ? "" : "n"} (1 Tippen)`;
+    dialogStatus(`${karten.length} Karten bereit${mitZus ? " (mit Zusammenfassung)" : ""}. „Alles teilen“ schickt alle Karten auf einmal, „Karte für Karte“ hält die Reihenfolge genau ein. „Kachel-PDF“ legt jede Karte auf eine eigene PDF-Seite.`);
 
-function oeffnePdfDialog() {
-  const tage = tageMitEintraegen();
-  document.getElementById("dialogKnoepfe").innerHTML = "";
-  document.getElementById("dialogTitel").textContent = "Reisebericht als PDF";
-  dialogStatus(`Deckblatt mit Routenkarte und ${tage.length} Tag${tage.length === 1 ? "" : "e"}, eine Seite je Tag.`);
-  dialogEl.hidden = false;
-  const knopf = pdfKnopf(tage, true, reisebuchName());
-  dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
-  return knopf;
+    async function teileAlles() {
+      if (!(navigator.canShare && navigator.canShare({ files: karten }))) {
+        dialogStatus("Dieses Gerät kann keine Bilder teilen. Kachel-PDF oder Nur Text nutzen.");
+        return;
+      }
+      try { await navigator.share({ files: karten }); dialogStatus("Geteilt."); }
+      catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt. Karte für Karte versuchen."); }
+    }
+    let pos = 0;
+    async function teileNaechste() {
+      if (pos >= karten.length) return;
+      try {
+        await navigator.share({ files: [karten[pos]] });
+        pos++;
+        einzeln.textContent = pos >= karten.length ? "✓ Alle Karten geteilt" : `Nächste Karte teilen (${pos + 1} von ${karten.length})`;
+        einzeln.disabled = pos >= karten.length;
+      } catch (e) { if (e.name !== "AbortError") dialogStatus("Teilen hat nicht geklappt."); }
+    }
+  }
+  zeigeAuswahl();
 }
-document.getElementById("pdfBtn").addEventListener("click", () => oeffnePdfDialog());
+document.getElementById("kachelBtn").addEventListener("click", () => oeffneKachelDialog());
 
 // ═════════════════════════════════════════════════════════════════════
 // 02.11.2026: Schreibhilfe für Titel und Text (Deutsch, Schweiz)
