@@ -1136,7 +1136,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "08.11.2026 · 09:30";
+const APP_VERSION = "08.11.2026 · 09:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -3879,14 +3879,25 @@ function postkartenKopf(e, nr, mitText) {
   const textH = textZ.length ? textZ.length * Math.round(textGr * 1.47) + 30 : 0;
   return { pillB, titelZ, textZ, textGr, zeigeOrt, kopfH, textH };
 }
-// Aufteilung der Fotos auf die Karten: [anzahl Karte 1, 6, 6, …]
+// 08.11.2026: Kacheln einer Postkarte -- wie im Bericht steht eine
+// Sub-Route als Karte im Fotoformat an erster Stelle, danach die Fotos.
+function postkartenKacheln(e) { return [...(istSubRoute(e) ? [{ karte: true }] : []), ...e.fotos.map(id => ({ id }))]; }
+// Aufteilung der Kacheln auf die Karten: [anzahl Karte 1, 6, 6, …]
 function postkartenPlan(e, nr) {
   const k = postkartenKopf(e, nr, true);
+  const n = postkartenKacheln(e).length;
   const frei = PK.H - 2 * PK.R - k.kopfH - k.textH;
   const reihen = Math.max(0, Math.min(3, Math.floor((frei + FOTO_LUFT) / (FOTO_H + FOTO_LUFT))));
-  const plan = [Math.min(e.fotos.length, reihen * 2)];
-  for (let rest = e.fotos.length - plan[0]; rest > 0; rest -= 6) plan.push(Math.min(6, rest));
+  const plan = [Math.min(n, reihen * 2)];
+  for (let rest = n - plan[0]; rest > 0; rest -= 6) plan.push(Math.min(6, rest));
   return plan;
+}
+async function subRoutenBild(e, nr, w, h) {
+  try {
+    const linie = abschnittLinien(abschnittVon(e)).find(l => l.id === `s${e.id}`);
+    const k = await statischeKarte({ punkte: [{ lat: e.lat, lon: e.lon, nr }], linien: linie ? [linie] : [], B: Math.round(w), H: Math.round(h), rand: 34, max: true, zMax: 16, ohneLuftlinie: true });
+    return k ? await bildLaden(k.url) : null;
+  } catch { return null; }
 }
 function postkartenTeile(e, nr = "") { return postkartenPlan(e, nr).length; }
 async function erstellePostkarte(e, nr, datum, teil = 0) {
@@ -3897,8 +3908,8 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   const k = postkartenKopf(e, nr, !folge);
   const ortText = `${istSubRoute(e) ? MODUS_SYMBOL[(gueltigeRoute(e) || {}).modus || e.modus] || "📍" : "📍"} ${subZeile(e)}`;
   const ab = plan.slice(0, teil).reduce((s2, n) => s2 + n, 0);
-  const fotos = e.fotos.slice(ab, ab + plan[teil]);
-  const paare = (await Promise.all(fotos.map(async id => [id, await ladeFotoBild(id)]))).filter(p => p[1]);
+  const fotos = postkartenKacheln(e).slice(ab, ab + plan[teil]);
+  const paare = (await Promise.all(fotos.map(async kch => [kch, kch.karte ? await subRoutenBild(e, nr, fotoB(), FOTO_H) : await ladeFotoBild(kch.id)]))).filter(p => p[1]);
   const fw = fotoB();
   const fotoH = Math.ceil(paare.length / 2) * (FOTO_H + FOTO_LUFT);
   const H = Math.max(PK.H, R + k.kopfH + k.textH + fotoH + R);   // nur bei sehr langem Text höher
@@ -3933,10 +3944,13 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
     y += 30;
   }
   // Fotos: alle gleich gross, 2 Spalten
-  paare.forEach(([id, bild], i) => {
+  paare.forEach(([kch, bild], i) => {
     const fx = R + (i % 2) * (fw + FOTO_LUFT), fy = y + Math.floor(i / 2) * (FOTO_H + FOTO_LUFT);
     zeichneCover(g, bild, fx, fy, fw, FOTO_H);
-    zeichneBildunterschrift(g, fotoText(id), fx, fy, fw, FOTO_H, 26, 14);
+    if (kch.karte) {
+      g.beginPath(); g.roundRect ? g.roundRect(fx, fy, fw, FOTO_H, 14) : g.rect(fx, fy, fw, FOTO_H);
+      g.lineWidth = 2; g.strokeStyle = PK.linie; g.stroke();
+    } else zeichneBildunterschrift(g, fotoText(kch.id), fx, fy, fw, FOTO_H, 26, 14);
   });
   return c;   // ohne Fusszeile (12.10.2026)
 }
