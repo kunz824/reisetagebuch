@@ -666,7 +666,8 @@
 
   /* ── Bericht (Papier) ─────────────────────────────────────────────── */
   #berichtDruck { display: flex; flex-direction: column; gap: 12px; }
-  #berichtDruck .pdf-seite { display: block; width: 100%; height: auto; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,.35); background: #fff; }
+  #berichtDruck .pdf-seite { display: block; width: 100%; height: auto; aspect-ratio: 210 / 297; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,.35); background: #fff; }
+  #berichtDruck .pdf-seite:not([src]) { background: #f3f1ec; }
   .seite {
     background: var(--papier);
     color: var(--tinte);
@@ -1136,7 +1137,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "08.11.2026 · 09:45";
+const APP_VERSION = "12.11.2026 · 22:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1306,6 +1307,10 @@ async function speichere() {
   berichtVeraltet = true;
   renderAlles();
 }
+
+// 12.11.2026: nur ablegen (z.B. Länder-Zwischenspeicher während eines Berichts),
+// ohne neu zu zeichnen und ohne die laufende Vorschau zu verwerfen
+function speichereStill() { return idb.put("daten", daten, "tagebuch").catch(fehler => console.error(fehler)); }
 
 function reiseTitel() { return daten.reise.titel || "Reisetagebuch"; }
 function istThema(e) { return e && e.art === "thema"; }
@@ -1587,6 +1592,7 @@ function renderTagebuch() {
   document.getElementById("tagListeLeer").hidden = tage.length > 0;
   for (const d of [...ausgewaehlt]) if (!tage.includes(d)) ausgewaehlt.delete(d);
 
+  const nummern = subNummern();   // 12.11.2026: einmal statt pro Tag
   for (const datum of tage) {
     const karte = document.createElement("article");
     karte.className = "tag-karte" + (ausgewaehlt.has(datum) ? " ausgewaehlt" : "");
@@ -1619,7 +1625,6 @@ function renderTagebuch() {
     }
     karte.appendChild(kopf);
 
-    const nummern = subNummern();
     eintraegeAm(datum).forEach((e, ei) => {
       const block = document.createElement("div");
       block.className = "eintrag " + (istThema(e) ? "thema" : "sub");
@@ -3011,7 +3016,7 @@ async function statischeKarte(opt = {}) {
       const auchZiel = sz.some(z => z.ziel && km([z.lat, z.lon], [e.lat, e.lon]) < 0.3);
       zeichneNadel(g, auchZiel ? x - 14 * gr : x, y, gr);
     });
-    return c.toDataURL("image/jpeg", 0.86);
+    return c.toDataURL("image/jpeg", 0.82);
   };
   let url;
   try { url = await zeichne(true); }
@@ -3071,7 +3076,7 @@ async function landFuer(ab) {
   if (!code || !box) return null;
   daten.laender[code] = { name: (j.address && j.address.country) || j.name || code.toUpperCase(), box };
   if (t) t.land = code;
-  speichere();
+  speichereStill();
   return daten.laender[code];
 }
 function bildLaden(url) {
@@ -3130,7 +3135,7 @@ async function abschnittKarte(a, B, H, nummern) {
   g.fillStyle = "rgba(255,255,255,0.88)"; g.fillRect(ex, ey + ih - fs * 1.6, tw + fs, fs * 1.6);
   g.fillStyle = "#23262c"; g.textBaseline = "middle";
   g.fillText(land.name, ex + fs / 2, ey + ih - fs * 0.8);
-  return { url: c.toDataURL("image/jpeg", 0.86), w: B, h: H };
+  return { url: c.toDataURL("image/jpeg", 0.82), w: B, h: H };
 }
 
 // ── Bericht (Vorschau = Druck) ───────────────────────────────────────
@@ -3158,8 +3163,73 @@ async function ladePdfJs() {
     } catch { pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; }
   }
 }
+// 12.11.2026: Vorschau schneller und sparsamer -- das PDF bleibt geöffnet,
+// gezeichnet werden nur die Seiten in der Nähe des sichtbaren Bereichs.
+// Seiten weit weg werden wieder freigegeben (wichtig für den Speicher am iPhone).
+let vorschauDok = null, vorschauBeob = null;
 function leereVorschau(ziel) {
-  ziel.querySelectorAll("img.pdf-seite").forEach(i => URL.revokeObjectURL(i.src));
+  if (vorschauBeob) { vorschauBeob.disconnect(); vorschauBeob = null; }
+  if (vorschauDok) { try { vorschauDok.destroy(); } catch { /* egal */ } vorschauDok = null; }
+  ziel.querySelectorAll("img.pdf-seite").forEach(i => { if (i.src) URL.revokeObjectURL(i.src); });
+}
+// Der Rand (rootMargin) wirkt nur am scrollenden Behälter selbst
+function scrollVorfahr(el) {
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === "auto" || o === "scroll") && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+function zeigeVorschauSeiten(ziel, pdf, lauf) {
+  const breite = Math.min(1200, Math.max(600, Math.round(ziel.clientWidth * (window.devicePixelRatio || 1))));
+  const seiten = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const img = new Image();
+    img.className = "pdf-seite";
+    img.alt = `Seite ${i}`;
+    img.dataset.seite = i;
+    seiten.push(img);
+  }
+  ziel.replaceChildren(...seiten);
+  const warteschlange = [];
+  let laeuft = false;
+  async function abarbeiten() {
+    if (laeuft) return;
+    laeuft = true;
+    while (warteschlange.length) {
+      const img = warteschlange.shift();
+      if (lauf !== berichtLauf || vorschauDok !== pdf) break;
+      if (img.src || !img.dataset.sichtbar) continue;
+      try {
+        const seite = await pdf.getPage(Number(img.dataset.seite));
+        const vp = seite.getViewport({ scale: breite / seite.getViewport({ scale: 1 }).width });
+        const c = document.createElement("canvas");
+        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+        await seite.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+        seite.cleanup();
+        const url = await new Promise(ok => c.toBlob(b => ok(URL.createObjectURL(b)), "image/jpeg", 0.85));
+        c.width = c.height = 0;
+        if (lauf !== berichtLauf || !img.dataset.sichtbar) URL.revokeObjectURL(url);
+        else img.src = url;
+      } catch (fehler) { console.error(fehler); }
+    }
+    laeuft = false;
+  }
+  vorschauBeob = new IntersectionObserver(eintraege => {
+    for (const en of eintraege) {
+      const img = en.target;
+      if (en.isIntersecting) {
+        img.dataset.sichtbar = "1";
+        if (!img.src) warteschlange.push(img);
+      } else {
+        delete img.dataset.sichtbar;
+        if (img.src) { URL.revokeObjectURL(img.src); img.removeAttribute("src"); }
+      }
+    }
+    warteschlange.sort((x, y) => x.dataset.seite - y.dataset.seite);
+    abarbeiten();
+  }, { root: scrollVorfahr(ziel), rootMargin: "1600px 0px" });
+  seiten.forEach(img => vorschauBeob.observe(img));
 }
 // Ohne Knopfdruck nur ein Hinweis; eine alte Vorschau verfällt bei jeder Änderung
 function renderBericht() {
@@ -3187,25 +3257,11 @@ async function zeigePdfVorschau() {
     status.textContent = "Vorschau wird gezeichnet …";
     await ladePdfJs();
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
-    const breite = Math.min(1400, Math.max(600, Math.round(ziel.clientWidth * (window.devicePixelRatio || 1))));
-    const seiten = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      if (lauf !== berichtLauf) { seiten.forEach(s => URL.revokeObjectURL(s.src)); return; }
-      status.textContent = `Vorschau: Seite ${i} von ${pdf.numPages} …`;
-      const seite = await pdf.getPage(i);
-      const vp = seite.getViewport({ scale: breite / seite.getViewport({ scale: 1 }).width });
-      const c = document.createElement("canvas");
-      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
-      await seite.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
-      const img = new Image();
-      img.className = "pdf-seite";
-      img.alt = `Seite ${i}`;
-      img.src = await new Promise(ok => c.toBlob(b => ok(URL.createObjectURL(b)), "image/jpeg", 0.86));
-      seiten.push(img);
-    }
-    pdf.destroy();
-    if (lauf !== berichtLauf) { seiten.forEach(s => URL.revokeObjectURL(s.src)); return; }
-    ziel.replaceChildren(...seiten);
+    if (lauf !== berichtLauf) { pdf.destroy(); return; }
+    leereVorschau(ziel);
+    vorschauDok = pdf;
+    zeigeVorschauSeiten(ziel, pdf, lauf);
+    return;
   } catch (fehler) {
     status.textContent = fehler.message || "Die Vorschau konnte nicht erstellt werden.";
     console.error(fehler);
@@ -3306,23 +3362,50 @@ function zeichneBildunterschrift(g, text, x, y, w, h, px, rad = 0) {
   g.fillText(t, x + px * 0.7, y + h - px * 0.7);
   g.restore();
 }
-// Foto passend zuschneiden (wie "cover"), Auflösung ca. 190 dpi.
-// text = Beschriftung (leer = ohne, z.B. auf der Titelseite)
-async function bildAusschnitt(id, wmm, hmm, text = "") {
+// 12.11.2026: Schneller und kleiner -- es wird die kleinste gespeicherte
+// Fassung des Fotos gelesen, die für die Zielgrösse noch reicht (oft die
+// 640-px-Fassung statt 1600 px), und das Ergebnis direkt als JPEG-Bytes
+// (ohne Base64-Umweg) ins PDF gegeben. Auflösung ca. 160 dpi.
+async function ladeFotoPassend(id, W, H) {
   const rec = await idb.get("fotos", id);
   if (!rec) return null;
-  let bild;
-  try { bild = await createImageBitmap(rec.voll); } catch { bild = await ladeBild(rec.voll).catch(() => null); }
+  let blob = rec.voll;
+  if (rec.klein && rec.w && rec.h) {
+    const f = Math.min(1, 640 / Math.max(rec.w, rec.h));
+    const kw = rec.w * f, kh = rec.h * f;
+    if (Math.max(W / kw, H / kh) <= 1.08) blob = rec.klein;   // reicht ohne sichtbares Hochrechnen
+  }
+  try { return await createImageBitmap(blob); } catch { return await ladeBild(blob).catch(() => null); }
+}
+function gibFrei(bild) { if (bild && bild.close) bild.close(); }
+function canvasZuBytes(c, qualitaet) {
+  return new Promise(ok => c.toBlob(async b => { ok(b ? new Uint8Array(await b.arrayBuffer()) : null); c.width = c.height = 0; }, "image/jpeg", qualitaet));
+}
+// Gleichzeitig höchstens n Fotos in Arbeit (Tempo ohne Speicherspitzen)
+function begrenzer(n) {
+  let aktiv = 0;
+  const warten = [];
+  const weiter = () => { if (aktiv < n && warten.length) { aktiv++; warten.shift()(); } };
+  return fn => new Promise((ok, fehler) => {
+    warten.push(() => fn().then(ok, fehler).finally(() => { aktiv--; weiter(); }));
+    weiter();
+  });
+}
+const PDF_DPMM = 6.3, PDF_QUALITAET = 0.8;
+async function bildAusschnitt(id, wmm, hmm, text = "") {
+  const W = Math.round(wmm * PDF_DPMM), H = Math.round(hmm * PDF_DPMM);
+  const bild = await ladeFotoPassend(id, W, H);
   if (!bild) return null;
-  const dpmm = 7.5;
-  const W = Math.round(wmm * dpmm), H = Math.round(hmm * dpmm);
   const f = Math.max(W / bild.width, H / bild.height);
   const sw = W / f, sh = H / f;
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
-  c.getContext("2d").drawImage(bild, (bild.width - sw) / 2, (bild.height - sh) / 2, sw, sh, 0, 0, W, H);
-  zeichneBildunterschrift(c.getContext("2d"), text, 0, 0, W, H, Math.round(2.4 * dpmm));
-  return c.toDataURL("image/jpeg", 0.84);
+  const g = c.getContext("2d");
+  g.imageSmoothingQuality = "high";
+  g.drawImage(bild, (bild.width - sw) / 2, (bild.height - sh) / 2, sw, sh, 0, 0, W, H);
+  gibFrei(bild);
+  zeichneBildunterschrift(g, text, 0, 0, W, H, Math.round(2.4 * PDF_DPMM));
+  return canvasZuBytes(c, PDF_QUALITAET);
 }
 
 // Dateiname des Reisebuchs bleibt immer gleich -> im OneDrive "Ersetzen"
@@ -3343,6 +3426,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
   const platz = h => { if (y + h > UNTEN) { neueSeite(); return true; } return false; };
   const k = kennzahlen();
   const nummern = subNummern();
+  const fotoPool = begrenzer(4);
   // Nummern-Pille (z.B. "3.1"), gibt die Breite zurück
   const pille = (text, x, yBasis, gross = true) => {
     schrift("bold", gross ? 9.5 : 7.5, D.weiss);
@@ -3657,17 +3741,18 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
         for (const zeile of textZ) { platz(5.2); doc.text(zeile, R, y + 4.1); y += 5.2; }
         y += 2;
       }
+      const vorbereitet = kacheln.map(kch => fotoPool(async () => {
+        if (!kch.karte) return bildAusschnitt(kch.id, ZW, ZH, fotoText(kch.id));
+        const linie = abschnittLinien(ab).find(l => l.id === `s${e.id}`);
+        // Grössenoptimiert: Strecke füllt das Bild, bei kurzen Wegen bis Zoom 16
+        const k = await statischeKarte({ punkte: [{ lat: e.lat, lon: e.lon, nr }], linien: linie ? [linie] : [], B: Math.round(ZW * 8), H: Math.round(ZH * 8), rand: 34, max: true, zMax: 16, ohneLuftlinie: true });
+        return k ? k.url : null;
+      }));
       for (let i = 0; i < kacheln.length; i += 2) {
         platz(ZH + L);
         y += 1;
         const reihe = kacheln.slice(i, i + 2);
-        const bilder = await Promise.all(reihe.map(async kch => {
-          if (!kch.karte) return bildAusschnitt(kch.id, ZW, ZH, fotoText(kch.id));
-          const linie = abschnittLinien(ab).find(l => l.id === `s${e.id}`);
-          // Grössenoptimiert: Strecke füllt das Bild, bei kurzen Wegen bis Zoom 16
-          const k = await statischeKarte({ punkte: [{ lat: e.lat, lon: e.lon, nr }], linien: linie ? [linie] : [], B: Math.round(ZW * 8), H: Math.round(ZH * 8), rand: 34, max: true, zMax: 16, ohneLuftlinie: true });
-          return k ? k.url : null;
-        }));
+        const bilder = await Promise.all(vorbereitet.slice(i, i + 2));
         reihe.forEach((kch, j) => {
           if (!bilder[j]) return;
           const x = R + j * (ZW + L);
@@ -3816,7 +3901,8 @@ function umbrechen(g, text, breite) {
   while (zeilen.length && !zeilen[zeilen.length - 1]) zeilen.pop();
   return zeilen;
 }
-async function ladeFotoBild(id) {
+async function ladeFotoBild(id, W = 0, H = 0) {
+  if (W && H) return ladeFotoPassend(id, W, H);
   const rec = await idb.get("fotos", id);
   if (!rec) return null;
   try { return await createImageBitmap(rec.voll); }
@@ -3849,7 +3935,7 @@ function collageFelder(n, W) {
   return [0, 1, 2, 3, 4, 5].map(i => [(i % 2) * (halb + L), Math.floor(i / 2) * (400 + L), halb, 400]);
 }
 function canvasZuDatei(c, name) {
-  return new Promise(ok => c.toBlob(b => ok(new File([b], name, { type: "image/jpeg" })), "image/jpeg", 0.88));
+  return new Promise(ok => c.toBlob(b => ok(new File([b], name, { type: "image/jpeg" })), "image/jpeg", 0.82));   // 12.11.2026: 0.82 statt 0.88 (WhatsApp komprimiert ohnehin nach)
 }
 
 // 07.11.2026: Alle WhatsApp-Karten haben dasselbe Format (1080 × 1350) und
@@ -3909,7 +3995,7 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   const ortText = `${istSubRoute(e) ? MODUS_SYMBOL[(gueltigeRoute(e) || {}).modus || e.modus] || "📍" : "📍"} ${subZeile(e)}`;
   const ab = plan.slice(0, teil).reduce((s2, n) => s2 + n, 0);
   const fotos = postkartenKacheln(e).slice(ab, ab + plan[teil]);
-  const paare = (await Promise.all(fotos.map(async kch => [kch, kch.karte ? await subRoutenBild(e, nr, fotoB(), FOTO_H) : await ladeFotoBild(kch.id)]))).filter(p => p[1]);
+  const paare = (await Promise.all(fotos.map(async kch => [kch, kch.karte ? await subRoutenBild(e, nr, fotoB(), FOTO_H) : await ladeFotoBild(kch.id, fotoB(), FOTO_H)]))).filter(p => p[1]);
   const fw = fotoB();
   const fotoH = Math.ceil(paare.length / 2) * (FOTO_H + FOTO_LUFT);
   const H = Math.max(PK.H, R + k.kopfH + k.textH + fotoH + R);   // nur bei sehr langem Text höher
@@ -3947,6 +4033,7 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   paare.forEach(([kch, bild], i) => {
     const fx = R + (i % 2) * (fw + FOTO_LUFT), fy = y + Math.floor(i / 2) * (FOTO_H + FOTO_LUFT);
     zeichneCover(g, bild, fx, fy, fw, FOTO_H);
+    gibFrei(bild);
     if (kch.karte) {
       g.beginPath(); g.roundRect ? g.roundRect(fx, fy, fw, FOTO_H, 14) : g.rect(fx, fy, fw, FOTO_H);
       g.lineWidth = 2; g.strokeStyle = PK.linie; g.stroke();
@@ -4198,7 +4285,7 @@ async function erstelleUebersichtskarte(tage, abs) {
   const eigene = new Set(abs.flatMap(a => [...(a.t ? a.t.fotos : []), ...a.subs.flatMap(e => e.fotos)]));
   let ids = (daten.titelFotos || []).filter(id => eigene.has(id)).slice(0, 4);
   if (!ids.length) ids = [...eigene].slice(0, 1);
-  const bilder = (await Promise.all(ids.map(ladeFotoBild))).filter(Boolean);
+  const bilder = (await Promise.all(ids.map(id => ladeFotoBild(id)))).filter(Boolean);
   const L = 6, n = bilder.length;
   const felder = n === 1 ? [[0, 0, B, fotoH]]
     : n === 2 ? [[0, 0, (B - L) / 2, fotoH], [(B + L) / 2, 0, (B - L) / 2, fotoH]]
