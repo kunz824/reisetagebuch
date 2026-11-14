@@ -1139,7 +1139,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "14.11.2026 · 23:45";
+const APP_VERSION = "14.11.2026 · 23:59";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1545,7 +1545,7 @@ function verkleinere(img, max, qualitaet) {
   const c = document.createElement("canvas");
   c.width = w; c.height = h;
   c.getContext("2d").drawImage(img, 0, 0, w, h);
-  return new Promise(ok => c.toBlob(b => ok({ blob: b, w, h }), "image/jpeg", qualitaet));
+  return new Promise(ok => c.toBlob(b => { c.width = c.height = 0; ok({ blob: b, w, h }); }, "image/jpeg", qualitaet));
 }
 async function speichereFoto(datei) {
   const img = await ladeBild(datei);
@@ -3032,7 +3032,9 @@ async function statischeKarte(opt = {}) {
       const auchZiel = sz.some(z => z.ziel && km([z.lat, z.lon], [e.lat, e.lon]) < 0.3);
       zeichneNadel(g, auchZiel ? x - 14 * gr : x, y, gr);
     });
-    return c.toDataURL("image/jpeg", 0.82);
+    const url = c.toDataURL("image/jpeg", 0.82);
+    c.width = c.height = 0;   // 14.11.2026: Zeichenfläche sofort freigeben (iOS-Grenze)
+    return url;
   };
   let url;
   try { url = await zeichne(true); }
@@ -3151,7 +3153,9 @@ async function abschnittKarte(a, B, H, nummern) {
   g.fillStyle = "rgba(255,255,255,0.88)"; g.fillRect(ex, ey + ih - fs * 1.6, tw + fs, fs * 1.6);
   g.fillStyle = "#23262c"; g.textBaseline = "middle";
   g.fillText(land.name, ex + fs / 2, ey + ih - fs * 0.8);
-  return { url: c.toDataURL("image/jpeg", 0.82), w: B, h: H };
+  const url = c.toDataURL("image/jpeg", 0.82);
+  c.width = c.height = 0;
+  return { url, w: B, h: H };
 }
 
 // ── Bericht (Vorschau = Druck) ───────────────────────────────────────
@@ -3382,16 +3386,34 @@ function zeichneBildunterschrift(g, text, x, y, w, h, px, rad = 0) {
 // Fassung des Fotos gelesen, die für die Zielgrösse noch reicht (oft die
 // 640-px-Fassung statt 1600 px), und das Ergebnis direkt als JPEG-Bytes
 // (ohne Base64-Umweg) ins PDF gegeben. Auflösung ca. 160 dpi.
-async function ladeFotoPassend(id, W, H) {
+async function ladeFotoPassend(id, W, H, ohneBitmap = false) {
   const rec = await idb.get("fotos", id);
-  if (!rec) return null;
+  if (!rec) return undefined;
   let blob = rec.voll;
   if (rec.klein && rec.w && rec.h) {
     const f = Math.min(1, 640 / Math.max(rec.w, rec.h));
     const kw = rec.w * f, kh = rec.h * f;
     if (Math.max(W / kw, H / kh) <= 1.08) blob = rec.klein;   // reicht ohne sichtbares Hochrechnen
   }
-  try { return await createImageBitmap(blob); } catch { return await ladeBild(blob).catch(() => null); }
+  if (ohneBitmap) return ladeBild(blob).catch(() => null);
+  try {
+    const bm = await createImageBitmap(blob);
+    if (!bitmapLeer(bm)) return bm;
+    bm.close();   // schwarz dekodiert -> über das Bild-Element nochmals
+  } catch { /* weiter unten */ }
+  return ladeBild(blob).catch(() => null);
+}
+function bitmapLeer(bm) {
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 6;
+    const g = c.getContext("2d");
+    g.drawImage(bm, 0, 0, 6, 6);
+    const d = g.getImageData(0, 0, 6, 6).data;
+    c.width = c.height = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 3 || d[i + 1] > 3 || d[i + 2] > 3) return false;
+    return true;
+  } catch { return false; }
 }
 function gibFrei(bild) { if (bild && bild.close) bild.close(); }
 function canvasZuBytes(c, qualitaet) {
@@ -3408,18 +3430,44 @@ function begrenzer(n) {
   });
 }
 const PDF_DPMM = 6.3, PDF_QUALITAET = 0.8;
+// 14.11.2026: iOS liefert bei knappem Bildspeicher manchmal ein leeres Bild
+// (im PDF als schwarzes Feld). Dann kurz warten und nochmals versuchen.
 async function bildAusschnitt(id, wmm, hmm, text = "") {
+  for (let versuch = 0; versuch < 3; versuch++) {
+    try {
+      const bytes = await bildAusschnittEinmal(id, wmm, hmm, text, versuch > 0);
+      if (bytes) return bytes;
+      if (bytes === undefined) return null;   // Foto existiert nicht
+    } catch (fehler) { console.warn("Foto", id, fehler); }
+    await new Promise(r => setTimeout(r, 150 * (versuch + 1)));
+  }
+  return null;
+}
+// Leer gezeichnet? (iOS dekodiert unter Speicherdruck manchmal schwarz)
+function istLeer(g, W, H) {
+  try {
+    for (let i = 1; i <= 5; i++) for (let j = 1; j <= 5; j++) {
+      const d = g.getImageData(Math.floor(W * i / 6), Math.floor(H * j / 6), 1, 1).data;
+      if (d[0] > 3 || d[1] > 3 || d[2] > 3) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+async function bildAusschnittEinmal(id, wmm, hmm, text = "", ohneBitmap = false) {
   const W = Math.round(wmm * PDF_DPMM), H = Math.round(hmm * PDF_DPMM);
-  const bild = await ladeFotoPassend(id, W, H);
-  if (!bild) return null;
+  const bild = await ladeFotoPassend(id, W, H, ohneBitmap);
+  if (bild === undefined) return undefined;
+  if (!bild || !bild.width) return null;
   const f = Math.max(W / bild.width, H / bild.height);
   const sw = W / f, sh = H / f;
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
+  if (!g) { gibFrei(bild); return null; }
   g.imageSmoothingQuality = "high";
   g.drawImage(bild, (bild.width - sw) / 2, (bild.height - sh) / 2, sw, sh, 0, 0, W, H);
   gibFrei(bild);
+  if (istLeer(g, W, H)) { c.width = c.height = 0; return null; }
   zeichneBildunterschrift(g, text, 0, 0, W, H, Math.round(2.4 * PDF_DPMM));
   return canvasZuBytes(c, PDF_QUALITAET);
 }
@@ -3442,7 +3490,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
   const platz = h => { if (y + h > UNTEN) { neueSeite(); return true; } return false; };
   const k = kennzahlen();
   const nummern = subNummern();
-  const fotoPool = begrenzer(4);
+  const fotoPool = begrenzer(3);
   // Nummern-Pille (z.B. "3.1"), gibt die Breite zurück
   const pille = (text, x, yBasis, gross = true) => {
     schrift("bold", gross ? 9.5 : 7.5, D.weiss);
@@ -3468,7 +3516,7 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
     const felder = mosaik(n, W, fotoH, L);
     doc.setFillColor(...D.nacht); doc.rect(0, 0, W, fotoH, "F");
     fortschritt && fortschritt(`Titelseite (${n} Foto${n === 1 ? "" : "s"}) …`);
-    const titelPool = begrenzer(4);
+    const titelPool = begrenzer(2);
     const titelBilder = titel.map((id, i) => titelPool(() => bildAusschnitt(id, felder[i][2], felder[i][3])));
     for (let i = 0; i < n; i++) {
       const f = felder[i];
@@ -3951,7 +3999,10 @@ function collageFelder(n, W) {
   return [0, 1, 2, 3, 4, 5].map(i => [(i % 2) * (halb + L), Math.floor(i / 2) * (400 + L), halb, 400]);
 }
 function canvasZuDatei(c, name) {
-  return new Promise(ok => c.toBlob(b => ok(new File([b], name, { type: "image/jpeg" })), "image/jpeg", 0.82));   // 12.11.2026: 0.82 statt 0.88 (WhatsApp komprimiert ohnehin nach)
+  return new Promise((ok, fehler) => c.toBlob(b => {
+    c.width = c.height = 0;   // 14.11.2026: sofort freigeben
+    b ? ok(new File([b], name, { type: "image/jpeg" })) : fehler(new Error("Zu wenig Speicher für die Karte."));
+  }, "image/jpeg", 0.82));   // 12.11.2026: 0.82 statt 0.88 (WhatsApp komprimiert ohnehin nach)
 }
 
 // 07.11.2026: Alle WhatsApp-Karten haben dasselbe Format (1080 × 1350) und
