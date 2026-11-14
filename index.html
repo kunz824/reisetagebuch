@@ -1137,7 +1137,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "12.11.2026 · 22:00";
+const APP_VERSION = "14.11.2026 · 23:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -4711,6 +4711,59 @@ feld("vorschlagUebernehmen").addEventListener("click", () => {
 feld("vorschlagVerwerfen").addEventListener("click", () => { feld("textVorschlag").hidden = true; vorschlag = null; schreibStatus(""); });
 
 // ── Datensicherung ───────────────────────────────────────────────────
+// Kleiner ZIP-Schreiber (ohne Kompression -- JPEG ist schon komprimiert).
+// Die Foto-Blobs werden nur für die Prüfsumme kurz gelesen und dann als
+// Verweis in die Datei übernommen, nicht kopiert.
+const CRC_TABELLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABELLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function zipSchreiber() {
+  const teile = [], verzeichnis = [];
+  let pos = 0;
+  const jetzt = new Date();
+  const zeit = (jetzt.getHours() << 11) | (jetzt.getMinutes() << 5) | (jetzt.getSeconds() >> 1);
+  const datum = ((jetzt.getFullYear() - 1980) << 9) | ((jetzt.getMonth() + 1) << 5) | jetzt.getDate();
+  const enc = new TextEncoder();
+  return {
+    async datei(name, blob) {
+      const n = enc.encode(name);
+      const crc = crc32(new Uint8Array(await blob.arrayBuffer()));
+      const groesse = blob.size;
+      const h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+      h.setUint16(10, zeit, true); h.setUint16(12, datum, true); h.setUint32(14, crc, true);
+      h.setUint32(18, groesse, true); h.setUint32(22, groesse, true); h.setUint16(26, n.length, true); h.setUint16(28, 0, true);
+      teile.push(h.buffer, n, blob);
+      verzeichnis.push({ n, crc, groesse, pos });
+      pos += 30 + n.length + groesse;
+    },
+    fertig() {
+      const start = pos;
+      for (const e of verzeichnis) {
+        const c = new DataView(new ArrayBuffer(46));
+        c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+        c.setUint16(10, 0, true); c.setUint16(12, zeit, true); c.setUint16(14, datum, true); c.setUint32(16, e.crc, true);
+        c.setUint32(20, e.groesse, true); c.setUint32(24, e.groesse, true); c.setUint16(28, e.n.length, true);
+        c.setUint32(42, e.pos, true);
+        teile.push(c.buffer, e.n);
+        pos += 46 + e.n.length;
+      }
+      const z = new DataView(new ArrayBuffer(22));
+      z.setUint32(0, 0x06054b50, true); z.setUint16(8, verzeichnis.length, true); z.setUint16(10, verzeichnis.length, true);
+      z.setUint32(12, pos - start, true); z.setUint32(16, start, true);
+      teile.push(z.buffer);
+      return new Blob(teile, { type: "application/zip" });
+    },
+  };
+}
+
 // Anzeige "letzte Sicherung" und Erinnerung im Tagebuch
 function renderSicherungsInfo() {
   const m = daten.meta || {};
@@ -4742,26 +4795,29 @@ document.getElementById("sicherungBtn").addEventListener("click", async () => {
   knopf.disabled = true;
   dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
   try {
-    // 05.11.2026: Foto für Foto in Teilstücke schreiben statt alles in einen
-    // riesigen Text -- sonst bricht Safari bei vielen Fotos ab ("A problem
-    // repeatedly occurred"). Das Dateiformat bleibt gleich.
-    const ids = await idb.schluessel("fotos");
-    const teile = [`{"format":"reisetagebuch","version":1,"erstellt":${JSON.stringify(new Date().toISOString())},"daten":${JSON.stringify(daten)},"fotos":[`];
-    let n = 0;
-    for (let i = 0; i < ids.length; i++) {
-      dialogStatus(`Sicherung wird erstellt … Foto ${i + 1} von ${ids.length}`);
-      const rec = await idb.get("fotos", ids[i]);
-      if (!rec) continue;
-      const json = JSON.stringify({ id: rec.id, w: rec.w, h: rec.h, voll: await blobZuDataUrl(rec.voll), klein: await blobZuDataUrl(rec.klein) });
-      teile.push(new Blob([(n ? "," : "") + json]));
-      n++;
-      if (i % 10 === 9) await new Promise(r => setTimeout(r, 0));   // Speicher freigeben lassen
+    // 14.11.2026: Sicherung als ZIP-Datei. Die Fotos kommen unverändert als
+    // JPEG hinein (kein Base64-Text mehr): rund 45 % kleiner, und Safari muss
+    // die Fotos nicht mehr als riesigen Text im Arbeitsspeicher halten -- daran
+    // ist die Sicherung bei vielen Fotos gescheitert. Die ZIP-Datei lässt sich
+    // in der Dateien-App öffnen (reisetagebuch.json + Ordner fotos).
+    const ids = new Set(daten.eintraege.flatMap(e => e.fotos));
+    (daten.titelFotos || []).forEach(id => ids.add(id));
+    const zip = zipSchreiber();
+    const liste = [];
+    let i = 0;
+    for (const id of ids) {
+      i++;
+      if (i % 5 === 1) dialogStatus(`Sicherung wird erstellt … Foto ${i} von ${ids.size}`);
+      const rec = await idb.get("fotos", id);
+      if (!rec || !rec.voll) continue;
+      const name = `fotos/${String(id).replace(/[^\w.-]/g, "_")}.jpg`;
+      await zip.datei(name, rec.voll);
+      liste.push({ id: rec.id, w: rec.w, h: rec.h, datei: name });
     }
-    teile.push("]}");
-    const blob = new Blob(teile, { type: "application/json" });
-    // Fester Dateiname (11.10.2026): so ersetzt jede neue Sicherung die alte im
-    // OneDrive-Ordner, statt dass sich Dateien mit Datum ansammeln.
-    const datei = new File([blob], `${dateiName(reiseTitel())}-sicherung.json`, { type: "application/json" });
+    const kopf = JSON.stringify({ format: "reisetagebuch-zip", version: 2, erstellt: new Date().toISOString(), daten, fotos: liste });
+    await zip.datei("reisetagebuch.json", new Blob([kopf], { type: "application/json" }), true);
+    const blob = zip.fertig();
+    const datei = new File([blob], `${dateiName(reiseTitel())}-sicherung.zip`, { type: "application/zip" });
     const gesichert = async () => {
       daten.meta.letzteSicherung = new Date().toISOString();
       try { await idb.put("daten", daten, "tagebuch"); } catch { /* egal */ }
