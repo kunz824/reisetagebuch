@@ -1078,6 +1078,8 @@
     <div class="formular">
       <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät.<br>Regelmässige Sicherung in der Cloud vornehmen.</p>
       <p class="hinweis" id="letzteSicherung"></p>
+      <button type="button" class="btn-abbrechen" id="einlesenBtn">📂 Sicherung einlesen</button>
+      <input type="file" id="einlesenInput" class="unsichtbar" accept=".zip,.json,application/zip,application/json">
       <p class="hinweis" id="appVersion" style="opacity:.7"></p>
     </div>
 
@@ -1137,7 +1139,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "14.11.2026 · 23:00";
+const APP_VERSION = "14.11.2026 · 23:45";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
@@ -1286,7 +1288,16 @@ function normalisiere(roh) {
   });
   d.tracks = Array.isArray(d.tracks) ? d.tracks : [];
   d.meta = Object.assign({ geaendert: "", letzteSicherung: "" }, d.meta || {});
-  d.titelFotos = Array.isArray(d.titelFotos) ? d.titelFotos : [];   // Fotos für die Titelseite
+  d.titelFotos = Array.isArray(d.titelFotos) ? d.titelFotos : [];   // Fotos für die Titelseite (bis 14.11.2026)
+  // 14.11.2026: ein Favoritenfoto je Tag {datum: fotoId} -- Titelfoto der
+  // Kachel und Teil des Titelblatts. Bisherige ★-Titelfotos werden übernommen.
+  if (!d.tagesFavoriten || typeof d.tagesFavoriten !== "object") {
+    d.tagesFavoriten = {};
+    for (const id of d.titelFotos) {
+      const e = d.eintraege.find(x => x.fotos.includes(id));
+      if (e && !d.tagesFavoriten[e.datum]) d.tagesFavoriten[e.datum] = id;
+    }
+  }
   // 21.10.2026: Beschriftung je Foto {fotoId: "Text"}
   d.fotoTexte = d.fotoTexte && typeof d.fotoTexte === "object" ? d.fotoTexte : {};
   return d;
@@ -1678,7 +1689,7 @@ function renderTagebuch() {
         streifen.className = "foto-streifen";
         e.fotos.forEach((id, i) => {
           const img = fotoImg(id);
-          if (daten.titelFotos.includes(id)) { img.classList.add("ist-titel"); img.title = "Titelfoto"; }
+          if (daten.tagesFavoriten[e.datum] === id) { img.classList.add("ist-titel"); img.title = "Tagesfavorit"; }
           img.addEventListener("click", ev => { if (auswahlModus) return; ev.stopPropagation(); oeffneLightbox(e.fotos, i); });
           streifen.appendChild(img);
         });
@@ -1817,7 +1828,7 @@ function neuerEintragAm(datum) {
 
 function formularLeeren() {
   form.id = null;
-  form.titel = new Set();
+  form.favorit = null;
   form.texte = new Map();
   form.route = null;
   form.routeModus = "auto";
@@ -1858,7 +1869,7 @@ function bearbeiteEintrag(id) {
     form.id = e.id;
     form.art = e.art;
     form.fotos = [...e.fotos];
-    form.titel = new Set(e.fotos.filter(id => daten.titelFotos.includes(id)));
+    form.favorit = e.fotos.find(id => daten.tagesFavoriten[e.datum] === id) || null;
     form.texte = new Map(e.fotos.filter(id => daten.fotoTexte[id]).map(id => [id, daten.fotoTexte[id]]));
     form.neu = new Set();
     form.entfernt = new Set();
@@ -1913,20 +1924,23 @@ function renderFormFotos() {
     weg.setAttribute("aria-label", "Foto entfernen");
     weg.addEventListener("click", async () => {
       form.fotos = form.fotos.filter(x => x !== id);
-      form.titel.delete(id);
+      if (form.favorit === id) form.favorit = null;
       form.texte.delete(id);
       if (form.neu.has(id)) { form.neu.delete(id); await loescheFoto(id); }
       else form.entfernt.add(id);
       renderFormFotos();
     });
-    // ★ = Titelfoto für die Titelseite des PDF (mehrere werden zur Collage)
+    // ★ = Tagesfavorit (14.11.2026): ein Foto pro Tag -- Titelfoto der
+    // Kachel und Teil des Titelblatts im Reisebericht
+    const fav = form.favorit === id;
     const stern = document.createElement("button");
     stern.type = "button";
-    stern.className = "titel-schalter" + (form.titel.has(id) ? " aktiv" : "");
-    stern.textContent = form.titel.has(id) ? "★ Titel" : "☆ Normal";
-    stern.setAttribute("aria-pressed", form.titel.has(id));
+    stern.className = "titel-schalter" + (fav ? " aktiv" : "");
+    stern.textContent = fav ? "★ Favorit" : "☆";
+    stern.title = "Tagesfavorit";
+    stern.setAttribute("aria-pressed", fav);
     stern.addEventListener("click", () => {
-      form.titel.has(id) ? form.titel.delete(id) : form.titel.add(id);
+      form.favorit = fav ? null : id;
       renderFormFotos();
     });
     const bild = document.createElement("div");
@@ -2569,10 +2583,11 @@ feld("eintragFormular").addEventListener("submit", async (ev) => {
     erstellt: bisher ? bisher.erstellt : Date.now(), geaendert: Date.now(),
   };
   if (bisher) Object.assign(bisher, eintrag); else daten.eintraege.push(eintrag);
-  // Titelfotos dieses Eintrags aktualisieren
+  // Tagesfavorit dieses Eintrags aktualisieren (ersetzt einen anderen Favoriten desselben Tages)
   const alleDiese = new Set([...(bisher ? bisher.fotos : []), ...form.fotos, ...form.entfernt]);
-  daten.titelFotos = daten.titelFotos.filter(id => !alleDiese.has(id))
-    .concat(eintrag.fotos.filter(id => form.titel.has(id)));
+  daten.titelFotos = daten.titelFotos.filter(id => !alleDiese.has(id));
+  for (const [d, id] of Object.entries(daten.tagesFavoriten)) if (alleDiese.has(id)) delete daten.tagesFavoriten[d];
+  if (form.favorit && eintrag.fotos.includes(form.favorit)) daten.tagesFavoriten[eintrag.datum] = form.favorit;
   for (const id of alleDiese) delete daten.fotoTexte[id];
   for (const id of eintrag.fotos) if (form.texte.get(id)) daten.fotoTexte[id] = form.texte.get(id);
   for (const id of form.entfernt) await loescheFoto(id);
@@ -2592,6 +2607,7 @@ zweistufig(feld("eintragLoeschen"), "Wirklich löschen? Nochmals tippen", async 
   if (e) {
     for (const id of new Set([...e.fotos, ...form.fotos])) await loescheFoto(id);
     daten.titelFotos = daten.titelFotos.filter(id => !e.fotos.includes(id));
+    for (const [d, id] of Object.entries(daten.tagesFavoriten)) if (e.fotos.includes(id)) delete daten.tagesFavoriten[d];
     for (const id of e.fotos) delete daten.fotoTexte[id];
     daten.eintraege = daten.eintraege.filter(x => x.id !== e.id);
   }
@@ -3441,22 +3457,22 @@ async function erstellePdf(tage, mitDeckblatt, fortschritt, dateiNameOhneEndung)
   // ── Titelseite ────────────────────────────────────────────────────
   if (mitDeckblatt) {
     fortschritt && fortschritt("Titelseite …");
-    const fotoH = 185, L = 1.5;
-    // Titelfotos (★ im Editor); ohne Auswahl das erste Foto der Reise
+    // 14.11.2026: Titelblatt = alle Tagesfavoriten der Reise, der Reihe nach
+    // (Tag 1 oben links). Ohne Favoriten: bisherige ★-Titelfotos bzw. erstes Foto.
     const alleFotos = new Set(daten.eintraege.flatMap(e => e.fotos));
-    let titel = daten.titelFotos.filter(id => alleFotos.has(id)).slice(0, 6);
+    let titel = favoritenVon(tage);
+    if (!titel.length) titel = daten.titelFotos.filter(id => alleFotos.has(id)).slice(0, 6);
     if (!titel.length) titel = eintraegeSortiert().flatMap(e => e.fotos).slice(0, 1);
     const n = titel.length;
-    let felder = [];
-    if (n === 1) felder = [[0, 0, W, fotoH]];
-    else if (n === 2) felder = [[0, 0, (W - L) / 2, fotoH], [(W + L) / 2, 0, (W - L) / 2, fotoH]];
-    else if (n === 3) { const gb = W * 0.62; felder = [[0, 0, gb, fotoH], [gb + L, 0, W - gb - L, (fotoH - L) / 2], [gb + L, (fotoH + L) / 2, W - gb - L, (fotoH - L) / 2]]; }
-    else if (n === 4) { const hb = (W - L) / 2, hh = (fotoH - L) / 2; felder = [[0, 0, hb, hh], [hb + L, 0, hb, hh], [0, hh + L, hb, hh], [hb + L, hh + L, hb, hh]]; }
-    else if (n >= 5) { const db = (W - 2 * L) / 3, hh = (fotoH - L) / 2; felder = [0, 1, 2, 3, 4, 5].slice(0, n).map(i => [(i % 3) * (db + L), Math.floor(i / 3) * (hh + L), db, hh]); if (n === 5) felder[4][2] = W - felder[4][0]; }
+    const fotoH = n > 9 ? 212 : 185, L = n > 9 ? 1 : 1.5;
+    const felder = mosaik(n, W, fotoH, L);
     doc.setFillColor(...D.nacht); doc.rect(0, 0, W, fotoH, "F");
+    fortschritt && fortschritt(`Titelseite (${n} Foto${n === 1 ? "" : "s"}) …`);
+    const titelPool = begrenzer(4);
+    const titelBilder = titel.map((id, i) => titelPool(() => bildAusschnitt(id, felder[i][2], felder[i][3])));
     for (let i = 0; i < n; i++) {
       const f = felder[i];
-      const url = await bildAusschnitt(titel[i], f[2], f[3]);
+      const url = await titelBilder[i];
       if (url) doc.addImage(url, "JPEG", f[0], f[1], f[2], f[3]);
     }
     // Verlauf nach unten, damit der Titel lesbar bleibt
@@ -4042,6 +4058,42 @@ async function erstellePostkarte(e, nr, datum, teil = 0) {
   return c;   // ohne Fusszeile (12.10.2026)
 }
 
+// 14.11.2026: Tagesfavoriten
+function tagesFavorit(datum) {
+  const id = daten.tagesFavoriten[datum];
+  return id && eintraegeAm(datum).some(e => e.fotos.includes(id)) ? id : null;
+}
+function favoritenVon(tage) { return [...new Set(tage)].sort().map(tagesFavorit).filter(Boolean); }
+// Titelfoto einer Titelkarte: Tagesfavorit, sonst das erste Foto des Abschnitts
+function titelFotoVon(ab) {
+  const eigene = [...(ab.t ? ab.t.fotos : []), ...ab.subs.flatMap(e => e.fotos)];
+  const fav = tagesFavorit(ab.datum);
+  return fav && eigene.includes(fav) ? fav : eigene[0] || null;
+}
+// Mosaik für viele Fotos: Spaltenzahl so, dass die Felder etwa 4:3 sind;
+// die letzte Reihe wird auf die ganze Breite verteilt. Reihenfolge bleibt.
+function mosaik(n, W, H, L) {
+  if (n === 1) return [[0, 0, W, H]];
+  if (n === 2) return [[0, 0, (W - L) / 2, H], [(W + L) / 2, 0, (W - L) / 2, H]];
+  if (n === 3) { const gb = W * 0.62; return [[0, 0, gb, H], [gb + L, 0, W - gb - L, (H - L) / 2], [gb + L, (H + L) / 2, W - gb - L, (H - L) / 2]]; }
+  let best = null;
+  for (let c = 2; c <= 10; c++) {
+    const r = Math.ceil(n / c);
+    const tw = (W - (c - 1) * L) / c, th = (H - (r - 1) * L) / r;
+    const wert = Math.abs(Math.log(tw / th / 1.33)) + (r * c - n) * 0.08;
+    if (!best || wert < best.wert) best = { c, r, wert };
+  }
+  const { c, r } = best;
+  const th = (H - (r - 1) * L) / r;
+  const felder = [];
+  for (let i = 0; i < n; i++) {
+    const zeile = Math.floor(i / c);
+    const inZeile = zeile === r - 1 ? n - zeile * c : c;
+    const tw = (W - (inZeile - 1) * L) / inZeile;
+    felder.push([(i % c) * (tw + L), zeile * (th + L), tw, th]);
+  }
+  return felder;
+}
 async function erstelleTitelkarte(datumOderAbschnitt, mitZus = false) {
   const ab = typeof datumOderAbschnitt === "string" ? abschnitteAm(datumOderAbschnitt)[0] : datumOderAbschnitt;
   const datum = ab.datum;
@@ -4058,19 +4110,23 @@ async function erstelleTitelkarte(datumOderAbschnitt, mitZus = false) {
   for (textGr = 34; textGr >= 26; textGr -= 2) {
     mess.font = `${textGr}px ${PK.serif}`;
     textZ = umbrechen(mess, t && t.text, W);
-    if (textZ.length * textGr * 1.47 <= (mitZus ? 300 : 420)) break;
+    if (textZ.length * textGr * 1.47 <= (titelFotoVon(ab) ? (mitZus ? 220 : 300) : (mitZus ? 300 : 420))) break;
   }
   const zh = Math.round(textGr * 1.47);
-  const kopfH = 20 + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30;
+  // 14.11.2026: Tagesfavorit als Titelfoto oben; Titel liegt auf dem Foto
+  const FH = mitZus && t ? 480 : 600;   // mit Zusammenfassung etwas flacher, damit alles auf 1350 px passt
+  const fotoId = titelFotoVon(ab);
+  const titelBild = fotoId ? await ladeFotoBild(fotoId, B, FH) : null;
+  const kopfH = titelBild ? FH + 30 - R : 20 + 60 + 70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0) + 30;
   const textH = textZ.length ? textZ.length * zh + 34 : 0;
   // 08.11.2026: Zusammenfassung wie in der Vorschau (Gesamt, Verkehrsmittel, Stationen)
   const zus = mitZus && t ? zusammenfassungPlan(ab, W) : null;
   if (zus) {
     // so viele Stationen, dass die Karte mindestens 420 px hoch bleibt
-    while (zus.stationen.length > 3 && PK.H - 2 * R - kopfH - textH - 34 - zus.hoehe() < 420) { zus.stationen.pop(); zus.mehr++; }
+    while (zus.stationen.length > 2 && PK.H - 2 * R - kopfH - textH - 34 - zus.hoehe() < (titelBild ? 300 : 420)) { zus.stationen.pop(); zus.mehr++; }
   }
   const zusH = zus ? zus.hoehe() : 0;
-  const GH = Math.max(380, PK.H - 2 * R - kopfH - textH - zusH - 34);
+  const GH = Math.max(titelBild ? 280 : 380, PK.H - 2 * R - kopfH - textH - zusH - 34);
   let karte = null;
   try {
     const punkte = abschnittPunkte(ab);
@@ -4084,12 +4140,24 @@ async function erstelleTitelkarte(datumOderAbschnitt, mitZus = false) {
   c.width = B; c.height = Math.round(H);
   const g = c.getContext("2d");
   g.fillStyle = PK.dunkel; g.fillRect(0, 0, B, H);
-  g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
   let y = R + 20;
+  if (titelBild) {
+    zeichneCover(g, titelBild, 0, 0, B, FH, 0);
+    gibFrei(titelBild);
+    const oben = g.createLinearGradient(0, 0, 0, 190);
+    oben.addColorStop(0, "rgba(16,20,27,0.78)"); oben.addColorStop(1, "rgba(16,20,27,0)");
+    g.fillStyle = oben; g.fillRect(0, 0, B, 190);
+    const unten = g.createLinearGradient(0, FH - 430, 0, FH);
+    unten.addColorStop(0, "rgba(16,20,27,0)"); unten.addColorStop(0.55, "rgba(16,20,27,0.62)"); unten.addColorStop(1, "rgba(16,20,27,0.97)");
+    g.fillStyle = unten; g.fillRect(0, FH - 430, B, 430);
+    g.fillStyle = PK.gold; g.fillRect(0, FH, B, 6);
+  }
+  g.fillStyle = PK.gold; g.fillRect(0, 0, B, 12);
   g.fillStyle = PK.gold; g.font = `600 28px ${PK.sans}`;
   g.fillText(`📖 ${reiseTitel()}`.toUpperCase(), R, y + 20);
   y += 60;
-  g.fillStyle = "#8b93a3"; g.font = `600 30px ${PK.sans}`;
+  if (titelBild) y = FH - 30 - (70 + titelZ.length * 76 + (strecke || kmTag >= 1 ? 64 : 0));
+  g.fillStyle = titelBild ? "#d6d9df" : "#8b93a3"; g.font = `600 30px ${PK.sans}`;
   g.fillText(`${tagLabel(datum)} · ${datumLang(datum)}`, R, y + 26);
   y += 70;
   g.fillStyle = PK.hell; g.font = `700 64px ${PK.sans}`;
@@ -4104,6 +4172,7 @@ async function erstelleTitelkarte(datumOderAbschnitt, mitZus = false) {
     y += 64;
   }
   y += 30;
+  if (titelBild) y = FH + 36;
   if (karte) {
     g.save();
     g.beginPath(); g.roundRect ? g.roundRect(R, y - 6, W, GH, 16) : g.rect(R, y - 6, W, GH); g.clip();
@@ -4283,15 +4352,15 @@ async function erstelleUebersichtskarte(tage, abs) {
   g.fillStyle = PK.dunkel; g.fillRect(0, 0, B, PK.H);
   const fotoH = 640;
   const eigene = new Set(abs.flatMap(a => [...(a.t ? a.t.fotos : []), ...a.subs.flatMap(e => e.fotos)]));
-  let ids = (daten.titelFotos || []).filter(id => eigene.has(id)).slice(0, 4);
+  // 14.11.2026: Tagesfavoriten der gewählten Tage, der Reihe nach
+  let ids = favoritenVon(tage);
+  if (!ids.length) ids = (daten.titelFotos || []).filter(id => eigene.has(id)).slice(0, 4);
   if (!ids.length) ids = [...eigene].slice(0, 1);
-  const bilder = (await Promise.all(ids.map(id => ladeFotoBild(id)))).filter(Boolean);
-  const L = 6, n = bilder.length;
-  const felder = n === 1 ? [[0, 0, B, fotoH]]
-    : n === 2 ? [[0, 0, (B - L) / 2, fotoH], [(B + L) / 2, 0, (B - L) / 2, fotoH]]
-    : n === 3 ? [[0, 0, B * 0.62, fotoH], [B * 0.62 + L, 0, B * 0.38 - L, (fotoH - L) / 2], [B * 0.62 + L, (fotoH + L) / 2, B * 0.38 - L, (fotoH - L) / 2]]
-    : [[0, 0, (B - L) / 2, (fotoH - L) / 2], [(B + L) / 2, 0, (B - L) / 2, (fotoH - L) / 2], [0, (fotoH + L) / 2, (B - L) / 2, (fotoH - L) / 2], [(B + L) / 2, (fotoH + L) / 2, (B - L) / 2, (fotoH - L) / 2]];
-  bilder.forEach((b, i) => zeichneCover(g, b, ...felder[i], 0));
+  const L = ids.length > 9 ? 4 : 6;
+  const felder = mosaik(ids.length, B, fotoH, L);
+  const pool = begrenzer(4);
+  const bilder = await Promise.all(ids.map((id, i) => pool(() => ladeFotoBild(id, felder[i][2], felder[i][3]))));
+  bilder.forEach((b, i) => { if (b) { zeichneCover(g, b, ...felder[i], 0); gibFrei(b); } });
   const verlauf = g.createLinearGradient(0, fotoH - 360, 0, fotoH);
   verlauf.addColorStop(0, "rgba(16,20,27,0)"); verlauf.addColorStop(1, "rgba(16,20,27,0.96)");
   g.fillStyle = verlauf; g.fillRect(0, fotoH - 360, B, 360);
@@ -4835,6 +4904,122 @@ document.getElementById("sicherungBtn").addEventListener("click", async () => {
     dialogStatus("Die Sicherung konnte nicht erstellt werden.");
     console.error(fehler);
   }
+});
+
+// ── Sicherung einlesen (14.11.2026) ───────────────────────────────────
+// Liest die ZIP-Sicherung (oder eine ältere .json-Sicherung) und ersetzt
+// danach -- erst nach Bestätigung -- das Tagebuch auf diesem Gerät.
+async function zipLesen(datei) {
+  const ende = new DataView(await datei.slice(Math.max(0, datei.size - 65557)).arrayBuffer());
+  let e = -1;
+  for (let i = ende.byteLength - 22; i >= 0; i--) if (ende.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error("Das ist keine gültige ZIP-Datei.");
+  const anzahl = ende.getUint16(e + 10, true), cdGroesse = ende.getUint32(e + 12, true), cdStart = ende.getUint32(e + 16, true);
+  const cd = new DataView(await datei.slice(cdStart, cdStart + cdGroesse).arrayBuffer());
+  const dek = new TextDecoder();
+  const eintraege = new Map();
+  for (let i = 0, p = 0; i < anzahl; i++) {
+    if (cd.getUint32(p, true) !== 0x02014b50) throw new Error("ZIP-Verzeichnis beschädigt.");
+    const methode = cd.getUint16(p + 10, true), gepackt = cd.getUint32(p + 20, true);
+    const nl = cd.getUint16(p + 28, true), xl = cd.getUint16(p + 30, true), kl = cd.getUint16(p + 32, true);
+    const lokal = cd.getUint32(p + 42, true);
+    const name = dek.decode(new Uint8Array(cd.buffer, p + 46, nl));
+    eintraege.set(name, { methode, gepackt, lokal });
+    p += 46 + nl + xl + kl;
+  }
+  return {
+    namen: [...eintraege.keys()],
+    async blob(name, typ) {
+      const z = eintraege.get(name);
+      if (!z) return null;
+      const lh = new DataView(await datei.slice(z.lokal, z.lokal + 30).arrayBuffer());
+      const start = z.lokal + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
+      const roh = datei.slice(start, start + z.gepackt);
+      if (z.methode === 0) return new Blob([await roh.arrayBuffer()], { type: typ });
+      if (z.methode === 8 && window.DecompressionStream) return new Blob([await new Response(roh.stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()], { type: typ });
+      throw new Error("Diese ZIP-Datei ist auf eine Art gepackt, die hier nicht lesbar ist.");
+    },
+  };
+}
+async function kleineFassung(voll) {
+  const img = await ladeBild(voll);
+  return verkleinere(img, 640, 0.78);
+}
+document.getElementById("einlesenBtn").addEventListener("click", () => document.getElementById("einlesenInput").click());
+document.getElementById("einlesenInput").addEventListener("change", async ev => {
+  const datei = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!datei) return;
+  const knoepfe = document.getElementById("dialogKnoepfe");
+  knoepfe.innerHTML = "";
+  document.getElementById("dialogTitel").textContent = "Sicherung einlesen";
+  dialogStatus("Sicherung wird geprüft …");
+  dialogEl.hidden = false;
+  let kopf, quelle;
+  try {
+    if (/\.json$/i.test(datei.name) || datei.type === "application/json") {
+      const j = JSON.parse(await datei.text());
+      if (j.format !== "reisetagebuch" || !j.daten) throw new Error("Das ist keine Reisetagebuch-Sicherung.");
+      kopf = { erstellt: j.erstellt, daten: j.daten, fotos: (j.fotos || []).map(f => ({ id: f.id, w: f.w, h: f.h, voll: f.voll, klein: f.klein })) };
+      quelle = { voll: async f => (await fetch(f.voll)).blob(), klein: async f => (f.klein ? (await fetch(f.klein)).blob() : null) };
+    } else {
+      const zip = await zipLesen(datei);
+      const j = JSON.parse(await (await zip.blob("reisetagebuch.json", "application/json")).text());
+      if (j.format !== "reisetagebuch-zip" || !j.daten) throw new Error("Das ist keine Reisetagebuch-Sicherung.");
+      kopf = j;
+      quelle = { voll: f => zip.blob(f.datei, "image/jpeg"), klein: async () => null };
+    }
+  } catch (fehler) {
+    dialogStatus(`Die Datei kann nicht eingelesen werden: ${fehler.message || fehler}`);
+    dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+    console.error(fehler);
+    return;
+  }
+  const neu = normalisiere(kopf.daten);
+  const erstellt = kopf.erstellt ? new Date(kopf.erstellt) : null;
+  const jetztFotos = new Set(daten.eintraege.flatMap(e => e.fotos)).size;
+  dialogStatus([
+    `Sicherung „${neu.reise.titel || "Reisetagebuch"}“${erstellt ? ` vom ${erstellt.toLocaleDateString("de-CH")}, ${erstellt.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}` : ""}:`,
+    `${neu.eintraege.length} Einträge, ${kopf.fotos.length} Fotos.`,
+    "",
+    `Achtung: Das Tagebuch auf diesem Gerät (${daten.eintraege.length} Einträge, ${jetztFotos} Fotos) wird dadurch vollständig ersetzt.`,
+  ].join("\n"));
+  const los = dialogKnopf("📂 Tagebuch ersetzen", "btn-speichern", () => {});
+  zweistufig(los, "Wirklich ersetzen? Nochmals tippen", async () => {
+    knoepfe.querySelectorAll("button").forEach(b => { b.disabled = true; });
+    try {
+      // Erst alle Fotos ablegen; die alten Fotos erst ganz am Schluss entfernen.
+      const behalten = new Set();
+      for (let i = 0; i < kopf.fotos.length; i++) {
+        const f = kopf.fotos[i];
+        if (i % 5 === 0) dialogStatus(`Fotos werden eingelesen … ${i + 1} von ${kopf.fotos.length}`);
+        const voll = await quelle.voll(f);
+        if (!voll || !voll.size) continue;
+        const klein = (await quelle.klein(f)) || (await kleineFassung(voll)).blob;
+        let { w, h } = f;
+        if (!w || !h) { const b = await createImageBitmap(voll); w = b.width; h = b.height; b.close(); }
+        await idb.put("fotos", { id: f.id, voll, klein, w, h });
+        behalten.add(f.id);
+      }
+      dialogStatus("Einträge werden übernommen …");
+      daten = neu;
+      await idb.put("daten", daten, "tagebuch");
+      for (const id of await idb.schluessel("fotos")) if (!behalten.has(id)) { try { await idb.del("fotos", id); } catch { /* egal */ } }
+      fotoUrlCache.forEach(u => URL.revokeObjectURL(u));
+      fotoUrlCache.clear();
+      berichtVeraltet = true;
+      if (typeof ladeReiseFelder === "function") ladeReiseFelder();
+      renderAlles();
+      renderSicherungsInfo();
+      dialogStatus(`Fertig: ${daten.eintraege.length} Einträge und ${behalten.size} Fotos eingelesen.`);
+    } catch (fehler) {
+      dialogStatus(`Einlesen abgebrochen: ${fehler.message || fehler}. Das bisherige Tagebuch ist noch vorhanden, solange „Fertig“ nicht erschienen ist.`);
+      console.error(fehler);
+    }
+    knoepfe.innerHTML = "";
+    dialogKnopf("Schliessen", "btn-abbrechen", schliesseDialog);
+  });
+  dialogKnopf("Abbrechen", "btn-abbrechen", schliesseDialog);
 });
 
 // ── Fotoansicht ──────────────────────────────────────────────────────
