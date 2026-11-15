@@ -1079,7 +1079,8 @@
       <p class="hinweis">Tagebuch und Fotos liegen nur auf diesem Gerät.<br>Regelmässige Sicherung in der Cloud vornehmen.</p>
       <p class="hinweis" id="letzteSicherung"></p>
       <button type="button" class="btn-abbrechen" id="einlesenBtn">📂 Sicherung einlesen</button>
-      <input type="file" id="einlesenInput" class="unsichtbar" accept=".zip,.json,application/zip,application/json">
+      <!-- 15.11.2026: ohne accept-Filter -- iOS graut ZIP-Dateien aus OneDrive/iCloud sonst aus; die Datei wird beim Einlesen geprüft -->
+      <input type="file" id="einlesenInput" class="unsichtbar">
       <p class="hinweis" id="appVersion" style="opacity:.7"></p>
     </div>
 
@@ -1139,7 +1140,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "14.11.2026 · 23:59";
+const APP_VERSION = "15.11.2026 · 20:00";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
