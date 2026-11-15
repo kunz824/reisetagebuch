@@ -497,7 +497,7 @@
     background: var(--bg-panel);
     overflow: hidden;
   }
-  .leaflet-container { font-family: var(--font); background: #1b1f26; }
+  .leaflet-container { font-family: var(--font); background: #1b1f26; isolation: isolate; }   /* 15.11.2026: Kartenebenen bleiben in der Karte (sonst liegt die Karte über Fotoansicht/Dialog) */
   .schreibhilfe { display: flex; flex-direction: column; gap: 6px; margin-top: -4px; }
   .schreibhilfe .knopf-reihe { display: flex; flex-direction: row; gap: 8px; }
   .schreibhilfe .knopf-reihe button { flex: 1; font-size: 13.5px; padding: 0 6px; }
@@ -723,7 +723,8 @@
   #dialog {
     position: absolute;
     inset: 0;
-    z-index: 30;
+    z-index: 3000;
+    transform: translateZ(0);   /* iPad-Safari: eigene Ebene, damit die Karte nicht darüber gezeichnet wird */
     background: rgba(5, 7, 10, 0.72);
     display: flex;
     align-items: flex-end;
@@ -771,7 +772,8 @@
   #lightbox {
     position: absolute;
     inset: 0;
-    z-index: 40;
+    z-index: 3100;
+    transform: translateZ(0);   /* iPad-Safari: eigene Ebene, damit die Karte nicht darüber gezeichnet wird */
     background: rgba(0, 0, 0, 0.94);
     display: flex;
     align-items: center;
@@ -1140,7 +1142,7 @@
 // ═════════════════════════════════════════════════════════════════════
 
 // Versionskennung: zeigt im Register Bericht, welche Version gerade läuft
-const APP_VERSION = "15.11.2026 · 20:00";
+const APP_VERSION = "15.11.2026 · 20:15";
 const PDF_LIB = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
 // 11.10.2026: OpenStreetMap-Standardkarte -- frei nutzbar ohne API-Schlüssel
 // (CARTO verlangt inzwischen einen Schlüssel: "API Key Required").
